@@ -1,0 +1,88 @@
+//@version=6
+indicator("DEBUG - See Filtering", overlay=true, max_boxes_count=100)
+
+impulseMultiplier = input.float(1.5, "Impulse Multiplier", minval=1.0, maxval=3.0)
+
+// Count everything
+var int totalPatterns = 0
+var int passedImpulse = 0
+var int passedBOS = 0
+var int finalValid = 0
+
+atr = ta.atr(14)
+
+if bar_index >= 1
+    prevRed = close[1] < open[1]
+    prevGreen = close[1] > open[1]
+    currGreen = close > open
+    currRed = close < open
+    
+    // Base pattern found
+    if (prevRed and currGreen) or (prevGreen and currRed)
+        totalPatterns += 1
+        
+        // Check impulse
+        currBody = math.abs(close - open)
+        minSize = atr * impulseMultiplier
+        
+        if currBody > minSize
+            passedImpulse += 1
+            
+            // Check BOS
+            hh = ta.highest(high, 10)
+            ll = ta.lowest(low, 10)
+            
+            if close > hh[1] or close < ll[1]
+                passedBOS += 1
+                finalValid += 1
+                
+                // DRAW THE ZONE
+                if prevRed and currGreen
+                    box.new(time[1], open[1], time, low[1], 
+                         bgcolor=color.new(color.green, 85), 
+                         border_color=color.green, 
+                         border_width=2, 
+                         extend=extend.right, 
+                         xloc=xloc.bar_time)
+                    
+                    label.new(time, low[1], str.tostring(finalValid), 
+                         style=label.style_label_up, 
+                         color=color.green, 
+                         textcolor=color.white, 
+                         xloc=xloc.bar_time)
+                
+                if prevGreen and currRed
+                    box.new(time[1], high[1], time, open[1], 
+                         bgcolor=color.new(color.red, 85), 
+                         border_color=color.red, 
+                         border_width=2, 
+                         extend=extend.right, 
+                         xloc=xloc.bar_time)
+                    
+                    label.new(time, high[1], str.tostring(finalValid), 
+                         style=label.style_label_down, 
+                         color=color.red, 
+                         textcolor=color.white, 
+                         xloc=xloc.bar_time)
+
+// SHOW RESULTS
+var table t = table.new(position.top_right, 2, 6, border_width=2)
+
+if barstate.islast
+    table.cell(t, 0, 0, "Filter", bgcolor=color.gray, text_color=color.white, text_size=size.normal)
+    table.cell(t, 1, 0, "Count", bgcolor=color.gray, text_color=color.white, text_size=size.normal)
+    
+    table.cell(t, 0, 1, "Total Patterns", text_color=color.white)
+    table.cell(t, 1, 1, str.tostring(totalPatterns), text_color=color.yellow, text_size=size.large)
+    
+    table.cell(t, 0, 2, "After Impulse", text_color=color.white)
+    table.cell(t, 1, 2, str.tostring(passedImpulse), text_color=color.orange, text_size=size.large)
+    
+    table.cell(t, 0, 3, "After BOS", text_color=color.white)
+    table.cell(t, 1, 3, str.tostring(passedBOS), text_color=color.aqua, text_size=size.large)
+    
+    table.cell(t, 0, 4, "FINAL ZONES", text_color=color.white, text_size=size.normal)
+    table.cell(t, 1, 4, str.tostring(finalValid), text_color=color.lime, text_size=size.huge)
+    
+    table.cell(t, 0, 5, "Current ATR", text_color=color.gray)
+    table.cell(t, 1, 5, str.tostring(atr, "#.#####"), text_color=color.gray)
