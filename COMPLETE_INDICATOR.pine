@@ -1,0 +1,185 @@
+//@version=6
+indicator("Institutional Order Blocks - Complete", overlay=true, max_boxes_count=50, max_labels_count=50)
+
+// ==================================================================================
+// ALL 4 RULES - AS YOU SPECIFIED
+// ==================================================================================
+// RULE 1: Base Pattern (Red→Green OR Green→Red)
+// RULE 2: The Impulse (Body > 2.0 × ATR) - Extended Range Candle
+// RULE 3: The Imbalance (Fair Value Gap)
+// RULE 4: The Accomplishment (Break of Structure)
+// ==================================================================================
+
+impulseMultiplier = input.float(2.0, "RULE 2: Impulse (Body > ATR × )", minval=1.5, maxval=3.0,
+     tooltip="Default 2.0 = strict. Lower to 1.5 for more zones")
+bosLookback = input.int(10, "RULE 4: Structure Lookback", minval=5, maxval=20)
+requireFVG = input.bool(true, "RULE 3: Require Fair Value Gap", 
+     tooltip="Keep ON for all 4 rules. Turn OFF to ignore FVG")
+deleteWhenTouched = input.bool(true, "Delete When Price Touches", 
+     tooltip="Keeps chart clean")
+maxZoneAge = input.int(30, "Max Zone Age (Days)")
+maxZones = input.int(20, "Max Zones to Display")
+
+// ==================================================================================
+// ZONE STORAGE
+// ==================================================================================
+type Zone
+    box b
+    label l
+    int createdBar
+    float top
+    float bottom
+
+var array<Zone> zones = array.new<Zone>()
+
+// ==================================================================================
+// ATR CALCULATION
+// ==================================================================================
+atr = ta.atr(14)
+
+// ==================================================================================
+// ZONE DETECTION
+// ==================================================================================
+if bar_index >= 2
+    // ==================================================================================
+    // RULE 1: BASE PATTERN
+    // ==================================================================================
+    // Demand: Red candle [1] followed by Green candle [0]
+    isRedBase = close[1] < open[1]
+    isGreenBase = close[1] > open[1]
+    isGreenImpulse = close > open
+    isRedImpulse = close < open
+    
+    demandBase = isRedBase and isGreenImpulse
+    supplyBase = isGreenBase and isRedImpulse
+    
+    // ==================================================================================
+    // RULE 2: THE IMPULSE - Body > 2.0 × ATR
+    // ==================================================================================
+    currentBody = math.abs(close - open)
+    bigImpulse = currentBody > (atr * impulseMultiplier)
+    
+    // ==================================================================================
+    // RULE 3: THE IMBALANCE (Fair Value Gap)
+    // ==================================================================================
+    // Demand FVG: high[2] < low[0] (gap exists)
+    demandFVG = high[2] < low
+    
+    // Supply FVG: low[2] > high[0] (gap exists)
+    supplyFVG = low[2] > high
+    
+    fvgPass_demand = not requireFVG or demandFVG
+    fvgPass_supply = not requireFVG or supplyFVG
+    
+    // ==================================================================================
+    // RULE 4: THE ACCOMPLISHMENT (Break of Structure)
+    // ==================================================================================
+    highestHigh = ta.highest(high, bosLookback)
+    lowestLow = ta.lowest(low, bosLookback)
+    
+    breakHigh = close > highestHigh[1]
+    breakLow = close < lowestLow[1]
+    
+    // ==================================================================================
+    // VALID ZONES (ALL RULES MUST PASS)
+    // ==================================================================================
+    validDemand = demandBase and bigImpulse and fvgPass_demand and breakHigh
+    validSupply = supplyBase and bigImpulse and fvgPass_supply and breakLow
+    
+    // ==================================================================================
+    // DRAW DEMAND ZONE (On RED base candle)
+    // ==================================================================================
+    if validDemand
+        // TOP = Body High of red candle = OPEN (since close < open)
+        // BOTTOM = Wick Low
+        float top = open[1]
+        float bottom = low[1]
+        
+        b = box.new(bar_index[1], top, bar_index + 20, bottom, 
+             bgcolor=color.new(color.green, 85), 
+             border_color=color.green, 
+             border_width=2)
+        
+        l = label.new(bar_index + 10, bottom, "DEMAND OB", 
+             style=label.style_label_up, 
+             color=color.new(color.green, 20), 
+             textcolor=color.white, 
+             size=size.small)
+        
+        array.push(zones, Zone.new(b, l, bar_index, top, bottom))
+    
+    // ==================================================================================
+    // DRAW SUPPLY ZONE (On GREEN base candle)
+    // ==================================================================================
+    if validSupply
+        // TOP = Wick High
+        // BOTTOM = Body Low of green candle = OPEN (since close > open)
+        float top = high[1]
+        float bottom = open[1]
+        
+        b = box.new(bar_index[1], top, bar_index + 20, bottom, 
+             bgcolor=color.new(color.red, 85), 
+             border_color=color.red, 
+             border_width=2)
+        
+        l = label.new(bar_index + 10, top, "SUPPLY OB", 
+             style=label.style_label_down, 
+             color=color.new(color.red, 20), 
+             textcolor=color.white, 
+             size=size.small)
+        
+        array.push(zones, Zone.new(b, l, bar_index, top, bottom))
+
+// ==================================================================================
+// DELETE TOUCHED ZONES (Only zones created in past, not current bar)
+// ==================================================================================
+if deleteWhenTouched and array.size(zones) > 0
+    for i = array.size(zones) - 1 to 0
+        z = array.get(zones, i)
+        
+        // Only delete if zone was created BEFORE current bar
+        if bar_index > z.createdBar
+            if low <= z.top and high >= z.bottom
+                box.delete(z.b)
+                label.delete(z.l)
+                array.remove(zones, i)
+
+// ==================================================================================
+// DELETE OLD ZONES (30 days)
+// ==================================================================================
+if array.size(zones) > 0
+    int barsPerDay = timeframe.in_seconds() > 0 ? math.round(86400 / timeframe.in_seconds()) : 24
+    int maxBars = maxZoneAge * barsPerDay
+    
+    for i = array.size(zones) - 1 to 0
+        z = array.get(zones, i)
+        if bar_index - z.createdBar > maxBars
+            box.delete(z.b)
+            label.delete(z.l)
+            array.remove(zones, i)
+
+// ==================================================================================
+// LIMIT TOTAL ZONES
+// ==================================================================================
+while array.size(zones) > maxZones
+    z = array.shift(zones)
+    box.delete(z.b)
+    label.delete(z.l)
+
+// ==================================================================================
+// ALERTS
+// ==================================================================================
+validDemand_alert = bar_index >= 2 and 
+     close[1] < open[1] and close > open and 
+     math.abs(close - open) > (atr * impulseMultiplier) and 
+     (not requireFVG or high[2] < low) and 
+     close > ta.highest(high, bosLookback)[1]
+
+validSupply_alert = bar_index >= 2 and 
+     close[1] > open[1] and close < open and 
+     math.abs(close - open) > (atr * impulseMultiplier) and 
+     (not requireFVG or low[2] > high) and 
+     close < ta.lowest(low, bosLookback)[1]
+
+alertcondition(validDemand_alert, "Demand Order Block", "New DEMAND Order Block created!")
+alertcondition(validSupply_alert, "Supply Order Block", "New SUPPLY Order Block created!")
