@@ -1,0 +1,47 @@
+//@version=6
+indicator("Simple Order Blocks", overlay=true, max_boxes_count=50)
+
+// Just find Red candle followed by Green candle (DEMAND)
+// Or Green candle followed by Red candle (SUPPLY)
+
+isRedNow = close[1] < open[1]
+isGreenNow = close[1] > open[1]
+
+isGreenCurrent = close > open
+isRedCurrent = close < open
+
+// DEMAND: Red then Green
+demandSetup = isRedNow and isGreenCurrent
+
+// SUPPLY: Green then Red
+supplySetup = isGreenNow and isRedCurrent
+
+// DRAW DEMAND ZONE (on red base candle)
+if demandSetup
+    box.new(time[1], open[1], time + (time - time[1]) * 50, low[1], 
+         bgcolor=color.new(color.green, 85), 
+         border_color=color.green, 
+         border_width=2, 
+         extend=extend.right, 
+         xloc=xloc.bar_time)
+    
+    label.new(time, low[1], "DEMAND", 
+         style=label.style_label_up, 
+         color=color.green, 
+         textcolor=color.white, 
+         xloc=xloc.bar_time)
+
+// DRAW SUPPLY ZONE (on green base candle)
+if supplySetup
+    box.new(time[1], high[1], time + (time - time[1]) * 50, open[1], 
+         bgcolor=color.new(color.red, 85), 
+         border_color=color.red, 
+         border_width=2, 
+         extend=extend.right, 
+         xloc=xloc.bar_time)
+    
+    label.new(time, high[1], "SUPPLY", 
+         style=label.style_label_down, 
+         color=color.red, 
+         textcolor=color.white, 
+         xloc=xloc.bar_time)
