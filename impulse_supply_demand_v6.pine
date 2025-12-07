@@ -309,8 +309,10 @@ if new1H and not na(o1H[2]) and not na(atr1H[1])
 //========================================
 // UPDATE EXISTING ZONES (touch / expire)
 //========================================
-if array.size(zones) > 0
-    for i = array.size(zones) - 1 to 0
+int zoneCount = array.size(zones)
+if zoneCount > 0
+    int i = zoneCount - 1
+    while i >= 0
         z = array.get(zones, i)
         bool shouldRemove = false
         
@@ -324,6 +326,8 @@ if array.size(zones) > 0
 
         if shouldRemove
             removeZone(i)
+        
+        i := i - 1
 
 //========================================
 // ALERT
