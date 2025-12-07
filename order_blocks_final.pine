@@ -111,29 +111,11 @@ if validDemand
     float zoneBottom = low[1]
     
     // Draw box starting from BASE candle
-    zoneBox = box.new(
-        left = time[1],
-        top = zoneTop,
-        right = time,
-        bottom = zoneBottom,
-        border_color = color.green,
-        bgcolor = demandColor,
-        border_width = 1,
-        extend = extend.right,
-        xloc = xloc.bar_time
-    )
+    zoneBox = box.new(left=time[1], top=zoneTop, right=time, bottom=zoneBottom, border_color=color.green, bgcolor=demandColor, border_width=1, extend=extend.right, xloc=xloc.bar_time)
     
     // Label at right edge
-    zoneLabel = label.new(
-        x = time,
-        y = zoneBottom,
-        text = timeframe.period == "240" ? "H4 Order Block" : timeframe.period == "60" ? "H1 Order Block" : "Order Block",
-        style = label.style_label_up,
-        color = color.green,
-        textcolor = color.white,
-        size = size.small,
-        xloc = xloc.bar_time
-    )
+    string labelText = timeframe.period == "240" ? "H4 Order Block" : (timeframe.period == "60" ? "H1 Order Block" : "Order Block")
+    zoneLabel = label.new(x=time, y=zoneBottom, text=labelText, style=label.style_label_up, color=color.green, textcolor=color.white, size=size.small, xloc=xloc.bar_time)
     
     // Store zone
     ob = OrderBlock.new(zoneBox, zoneLabel, zoneTop, zoneBottom, true)
@@ -148,29 +130,11 @@ if validSupply
     float zoneBottom = math.min(close[1], open[1])
     
     // Draw box starting from BASE candle
-    zoneBox = box.new(
-        left = time[1],
-        top = zoneTop,
-        right = time,
-        bottom = zoneBottom,
-        border_color = color.red,
-        bgcolor = supplyColor,
-        border_width = 1,
-        extend = extend.right,
-        xloc = xloc.bar_time
-    )
+    zoneBox = box.new(left=time[1], top=zoneTop, right=time, bottom=zoneBottom, border_color=color.red, bgcolor=supplyColor, border_width=1, extend=extend.right, xloc=xloc.bar_time)
     
     // Label at right edge
-    zoneLabel = label.new(
-        x = time,
-        y = zoneTop,
-        text = timeframe.period == "240" ? "H4 Order Block" : timeframe.period == "60" ? "H1 Order Block" : "Order Block",
-        style = label.style_label_down,
-        color = color.red,
-        textcolor = color.white,
-        size = size.small,
-        xloc = xloc.bar_time
-    )
+    string labelText = timeframe.period == "240" ? "H4 Order Block" : (timeframe.period == "60" ? "H1 Order Block" : "Order Block")
+    zoneLabel = label.new(x=time, y=zoneTop, text=labelText, style=label.style_label_down, color=color.red, textcolor=color.white, size=size.small, xloc=xloc.bar_time)
     
     // Store zone
     ob = OrderBlock.new(zoneBox, zoneLabel, zoneTop, zoneBottom, true)
