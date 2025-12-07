@@ -1,0 +1,60 @@
+//@version=6
+indicator("Order Blocks - Final", overlay=true, max_boxes_count=30)
+
+// Fixed settings that work
+multiplier = input.float(1.3, "Body Multiplier", minval=1.0, maxval=2.0)
+maxZones = input.int(15, "Max Zones", minval=5, maxval=30)
+
+var box[] boxes = array.new<box>()
+var label[] labels = array.new<label>()
+
+if bar_index >= 10
+    // Pattern
+    demand = close[1] < open[1] and close > open
+    supply = close[1] > open[1] and close < open
+    
+    // Size (using average body)
+    avg = ta.sma(math.abs(close - open), 20)
+    curr = math.abs(close - open)
+    big = curr > (avg * multiplier)
+    
+    // Structure
+    hh = ta.highest(high, 10)
+    ll = ta.lowest(low, 10)
+    up = close > hh[1]
+    down = close < ll[1]
+    
+    // DEMAND
+    if demand and big and up
+        b = box.new(bar_index[1], open[1], bar_index + 20, low[1], 
+             bgcolor=color.new(color.green, 85), 
+             border_color=color.green, 
+             border_width=2)
+        
+        l = label.new(bar_index + 10, low[1], "DEMAND", 
+             style=label.style_label_up, 
+             color=color.green, 
+             textcolor=color.white)
+        
+        array.push(boxes, b)
+        array.push(labels, l)
+    
+    // SUPPLY
+    if supply and big and down
+        b = box.new(bar_index[1], high[1], bar_index + 20, open[1], 
+             bgcolor=color.new(color.red, 85), 
+             border_color=color.red, 
+             border_width=2)
+        
+        l = label.new(bar_index + 10, high[1], "SUPPLY", 
+             style=label.style_label_down, 
+             color=color.red, 
+             textcolor=color.white)
+        
+        array.push(boxes, b)
+        array.push(labels, l)
+
+// Keep only recent zones
+while array.size(boxes) > maxZones
+    box.delete(array.shift(boxes))
+    label.delete(array.shift(labels))
