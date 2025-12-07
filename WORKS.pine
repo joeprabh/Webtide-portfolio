@@ -1,0 +1,116 @@
+//@version=6
+indicator("Institutional Order Blocks", overlay=true, max_boxes_count=50, max_labels_count=50)
+
+// ==================================================================================
+// SETTINGS - ADJUST TO SEE MORE OR FEWER ZONES
+// ==================================================================================
+bodyMult = input.float(1.5, "Body Multiplier", minval=1.0, maxval=2.5, step=0.1)
+useFVG = input.bool(false, "Require FVG (Rule 3)", tooltip="Turn ON for stricter")
+useBOS = input.bool(true, "Require BOS (Rule 4)")
+bosLen = input.int(10, "BOS Lookback")
+maxZones = input.int(10, "Max Fresh Zones")
+
+type OB
+    box b
+    label l = na
+    int bar
+    float top
+    float bot
+
+var array<OB> obs = array.new<OB>()
+atr = ta.atr(14)
+
+if bar_index >= 12
+    // Base
+    db = close[1] < open[1] and close > open
+    sb = close[1] > open[1] and close < open
+    
+    // Body
+    bd = math.abs(close - open)
+    big = bd > atr * bodyMult
+    
+    // FVG
+    dfvg = high[2] < low
+    sfvg = low[2] > high
+    fok_d = not useFVG or dfvg
+    fok_s = not useFVG or sfvg
+    
+    // BOS
+    hh = ta.highest(high, bosLen)
+    ll = ta.lowest(low, bosLen)
+    bup = close > hh[1]
+    bdn = close < ll[1]
+    bok_d = not useBOS or bup
+    bok_s = not useBOS or bdn
+    
+    // Valid
+    vd = db and big and fok_d and bok_d
+    vs = sb and big and fok_s and bok_s
+    
+    // Demand
+    if vd
+        t = open[1]
+        bot = low[1]
+        
+        b = box.new(bar_index[1], t, bar_index + 50, bot,
+             bgcolor=color.new(color.green, 85),
+             border_color=color.green,
+             border_width=2)
+        
+        l = label.new(bar_index[1] + 25, bot, "BUY",
+             style=label.style_label_up,
+             color=color.new(color.green, 20),
+             textcolor=color.white,
+             size=size.small)
+        
+        array.push(obs, OB.new(b, l, bar_index[1], t, bot))
+    
+    // Supply
+    if vs
+        t = high[1]
+        bot = open[1]
+        
+        b = box.new(bar_index[1], t, bar_index + 50, bot,
+             bgcolor=color.new(color.red, 85),
+             border_color=color.red,
+             border_width=2)
+        
+        l = label.new(bar_index[1] + 25, t, "SELL",
+             style=label.style_label_down,
+             color=color.new(color.red, 20),
+             textcolor=color.white,
+             size=size.small)
+        
+        array.push(obs, OB.new(b, l, bar_index[1], t, bot))
+
+// Delete touched
+if array.size(obs) > 0
+    for i = array.size(obs) - 1 to 0
+        o = array.get(obs, i)
+        if bar_index > o.bar and low <= o.top and high >= o.bot
+            box.delete(o.b)
+            if not na(o.l)
+                label.delete(o.l)
+            array.remove(obs, i)
+
+// Limit
+while array.size(obs) > maxZones
+    o = array.shift(obs)
+    box.delete(o.b)
+    if not na(o.l)
+        label.delete(o.l)
+
+// Status
+var table tb = table.new(position.top_right, 2, 3)
+if barstate.islast
+    table.cell(tb, 0, 0, "Fresh Zones", bgcolor=color.new(color.blue, 50), text_color=color.white)
+    table.cell(tb, 1, 0, str.tostring(array.size(obs)), bgcolor=color.new(color.blue, 50), text_color=color.yellow, text_size=size.large)
+    
+    table.cell(tb, 0, 1, "Min Body", bgcolor=color.new(color.black, 70), text_color=color.white)
+    table.cell(tb, 1, 1, str.tostring(math.round(atr * bodyMult, 5)), bgcolor=color.new(color.black, 70), text_color=color.orange)
+    
+    rules = "Base+Body"
+    rules := useFVG ? rules + "+FVG" : rules
+    rules := useBOS ? rules + "+BOS" : rules
+    table.cell(tb, 0, 2, "Rules", bgcolor=color.new(color.black, 70), text_color=color.white)
+    table.cell(tb, 1, 2, rules, bgcolor=color.new(color.black, 70), text_color=color.lime, text_size=size.tiny)

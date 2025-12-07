@@ -1,0 +1,122 @@
+//@version=6
+indicator("Quality Order Blocks", overlay=true, max_boxes_count=50, max_labels_count=50)
+
+// ==================================================================================
+// BEST SETTINGS (Pre-configured for quality zones)
+// ==================================================================================
+useBigImpulse = input.bool(true, "✓ Big Impulse Rule", group="FILTERS")
+impulseMultiplier = input.float(1.5, "  Body > Avg × ", minval=1.0, maxval=3.0, group="FILTERS")
+
+useBreakStructure = input.bool(true, "✓ Break of Structure", group="FILTERS")
+bosLookback = input.int(10, "  Lookback Bars", minval=5, maxval=20, group="FILTERS")
+
+useFVG = input.bool(false, "✓ Fair Value Gap (Very Strict!)", group="FILTERS", 
+     tooltip="Turn ON for highest quality but very rare zones")
+
+deleteOnTouch = input.bool(true, "✓ Delete When Touched", group="MANAGEMENT")
+
+// ==================================================================================
+// STORAGE
+// ==================================================================================
+type Zone
+    box b
+    label l
+    float top
+    float bottom
+
+var array<Zone> zones = array.new<Zone>()
+
+// ==================================================================================
+// DETECTION
+// ==================================================================================
+if bar_index >= 1
+    // Base pattern
+    prevRed = close[1] < open[1]
+    prevGreen = close[1] > open[1]
+    currGreen = close > open
+    currRed = close < open
+    
+    demandSetup = prevRed and currGreen
+    supplySetup = prevGreen and currRed
+    
+    // Big Impulse check
+    avgBody = ta.sma(math.abs(close - open), 20)
+    currBody = math.abs(close - open)
+    isBig = currBody > (avgBody * impulseMultiplier)
+    
+    impulseOK = not useBigImpulse or isBig
+    
+    // FVG check
+    demandFVG = bar_index >= 2 and high[2] < low
+    supplyFVG = bar_index >= 2 and low[2] > high
+    
+    fvgOK_d = not useFVG or demandFVG
+    fvgOK_s = not useFVG or supplyFVG
+    
+    // Break of Structure
+    hh = ta.highest(high, bosLookback)
+    ll = ta.lowest(low, bosLookback)
+    
+    breakUp = close > hh[1]
+    breakDown = close < ll[1]
+    
+    bosOK_d = not useBreakStructure or breakUp
+    bosOK_s = not useBreakStructure or breakDown
+    
+    // Valid zones
+    validDemand = demandSetup and impulseOK and fvgOK_d and bosOK_d
+    validSupply = supplySetup and impulseOK and fvgOK_s and bosOK_s
+    
+    // DRAW DEMAND
+    if validDemand
+        b = box.new(time[1], open[1], time, low[1], 
+             bgcolor=color.new(color.green, 85), 
+             border_color=color.green, 
+             border_width=2, 
+             extend=extend.right, 
+             xloc=xloc.bar_time)
+        
+        l = label.new(time, low[1], "DEMAND", 
+             style=label.style_label_up, 
+             color=color.new(color.green, 20), 
+             textcolor=color.white, 
+             xloc=xloc.bar_time)
+        
+        array.push(zones, Zone.new(b, l, open[1], low[1]))
+    
+    // DRAW SUPPLY
+    if validSupply
+        b = box.new(time[1], high[1], time, open[1], 
+             bgcolor=color.new(color.red, 85), 
+             border_color=color.red, 
+             border_width=2, 
+             extend=extend.right, 
+             xloc=xloc.bar_time)
+        
+        l = label.new(time, high[1], "SUPPLY", 
+             style=label.style_label_down, 
+             color=color.new(color.red, 20), 
+             textcolor=color.white, 
+             xloc=xloc.bar_time)
+        
+        array.push(zones, Zone.new(b, l, high[1], open[1]))
+
+// DELETE TOUCHED
+if deleteOnTouch and array.size(zones) > 0
+    for i = array.size(zones) - 1 to 0
+        z = array.get(zones, i)
+        if low <= z.top and high >= z.bottom
+            box.delete(z.b)
+            label.delete(z.l)
+            array.remove(zones, i)
+
+// UPDATE LABELS
+if barstate.islast and array.size(zones) > 0
+    for z in zones
+        label.set_x(z.l, time)
+
+// LIMIT
+while array.size(zones) > 50
+    z = array.shift(zones)
+    box.delete(z.b)
+    label.delete(z.l)

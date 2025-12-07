@@ -1,0 +1,169 @@
+// This source code is subject to the terms of the Mozilla Public License 2.0 at https://mozilla.org/MPL/2.0/
+// © Order Block Zones - Simple Rectangles
+//@version=6
+indicator("Order Block Zones", overlay=true, max_boxes_count=100, max_labels_count=100)
+
+// ==================================================================================
+// INPUTS
+// ==================================================================================
+impulseMultiplier = input.float(2.0, "Impulse Multiplier", minval=1.0, maxval=5.0)
+pivotLookback = input.int(10, "Pivot Lookback", minval=5, maxval=50)
+atrLength = input.int(14, "ATR Length", minval=5, maxval=100)
+
+demandColor = input.color(color.new(color.green, 60), "Demand Color")
+supplyColor = input.color(color.new(color.red, 60), "Supply Color")
+
+// ==================================================================================
+// CALCULATIONS
+// ==================================================================================
+
+// Average True Range
+atr = ta.atr(atrLength)
+
+// Current candle
+bullish = close > open
+bearish = close < open
+bodySize = math.abs(close - open)
+
+// Previous candle (BASE CANDLE)
+bullish1 = close[1] > open[1]
+bearish1 = close[1] < open[1]
+
+// ==================================================================================
+// RULE 1: EXTENDED RANGE CANDLE (Body > 2.0 x ATR)
+// ==================================================================================
+
+explosiveBull = bullish and bodySize > (atr * impulseMultiplier)
+explosiveBear = bearish and bodySize > (atr * impulseMultiplier)
+
+// ==================================================================================
+// BASE CANDLE DETECTION
+// ==================================================================================
+
+// DEMAND: Red candle [1] followed by Green candle [0]
+demandBase = bearish1 and explosiveBull
+
+// SUPPLY: Green candle [1] followed by Red candle [0]
+supplyBase = bullish1 and explosiveBear
+
+// ==================================================================================
+// RULE 2: FAIR VALUE GAP (FVG)
+// ==================================================================================
+
+// For DEMAND: Gap between high[2] and low[0]
+demandFVG = high[2] < low[0]
+
+// For SUPPLY: Gap between low[2] and high[0]
+supplyFVG = low[2] > high[0]
+
+// ==================================================================================
+// RULE 3: BREAK OF STRUCTURE
+// ==================================================================================
+
+// Find highest high in last N bars
+var float highestHigh = na
+highestHigh := high[1]
+for i = 1 to pivotLookback
+    if high[i] > highestHigh
+        highestHigh := high[i]
+
+// Find lowest low in last N bars
+var float lowestLow = na
+lowestLow := low[1]
+for i = 1 to pivotLookback
+    if low[i] < lowestLow
+        lowestLow := low[i]
+
+// Check if current close broke structure
+demandBOS = close > highestHigh
+supplyBOS = close < lowestLow
+
+// ==================================================================================
+// VALID ZONE (ALL 3 RULES MUST PASS)
+// ==================================================================================
+
+validDemand = demandBase and demandFVG and demandBOS
+validSupply = supplyBase and supplyFVG and supplyBOS
+
+// ==================================================================================
+// ZONE STORAGE
+// ==================================================================================
+
+type OrderBlock
+    box zoneBox
+    label zoneLabel
+    float top
+    float bottom
+    bool isFresh
+
+var array<OrderBlock> zones = array.new<OrderBlock>()
+
+// ==================================================================================
+// CREATE ZONES (Draw on BASE CANDLE)
+// ==================================================================================
+
+if validDemand
+    // DEMAND ZONE: Draw on RED base candle [1]
+    // Top = Body High of red candle
+    // Bottom = Wick Low of red candle
+    
+    float zoneTop = math.max(close[1], open[1])
+    float zoneBottom = low[1]
+    
+    // Draw box starting from BASE candle
+    zoneBox = box.new(left=time[1], top=zoneTop, right=time, bottom=zoneBottom, border_color=color.green, bgcolor=demandColor, border_width=1, extend=extend.right, xloc=xloc.bar_time)
+    
+    // Label at right edge
+    string labelText = timeframe.period == "240" ? "H4 Order Block" : (timeframe.period == "60" ? "H1 Order Block" : "Order Block")
+    zoneLabel = label.new(x=time, y=zoneBottom, text=labelText, style=label.style_label_up, color=color.green, textcolor=color.white, size=size.small, xloc=xloc.bar_time)
+    
+    // Store zone
+    ob = OrderBlock.new(zoneBox, zoneLabel, zoneTop, zoneBottom, true)
+    array.push(zones, ob)
+
+if validSupply
+    // SUPPLY ZONE: Draw on GREEN base candle [1]
+    // Top = Wick High of green candle
+    // Bottom = Body Low of green candle
+    
+    float zoneTop = high[1]
+    float zoneBottom = math.min(close[1], open[1])
+    
+    // Draw box starting from BASE candle
+    zoneBox = box.new(left=time[1], top=zoneTop, right=time, bottom=zoneBottom, border_color=color.red, bgcolor=supplyColor, border_width=1, extend=extend.right, xloc=xloc.bar_time)
+    
+    // Label at right edge
+    string labelText = timeframe.period == "240" ? "H4 Order Block" : (timeframe.period == "60" ? "H1 Order Block" : "Order Block")
+    zoneLabel = label.new(x=time, y=zoneTop, text=labelText, style=label.style_label_down, color=color.red, textcolor=color.white, size=size.small, xloc=xloc.bar_time)
+    
+    // Store zone
+    ob = OrderBlock.new(zoneBox, zoneLabel, zoneTop, zoneBottom, true)
+    array.push(zones, ob)
+
+// ==================================================================================
+// ZONE MITIGATION & CLEANUP
+// ==================================================================================
+
+if array.size(zones) > 0
+    for i = array.size(zones) - 1 to 0
+        ob = array.get(zones, i)
+        
+        // Check if price touched zone
+        if low <= ob.top and high >= ob.bottom and ob.isFresh
+            // MITIGATION: Delete zone immediately
+            box.delete(ob.zoneBox)
+            label.delete(ob.zoneLabel)
+            array.remove(zones, i)
+
+// Update label positions to right edge
+if barstate.islast and array.size(zones) > 0
+    for i = 0 to array.size(zones) - 1
+        ob = array.get(zones, i)
+        label.set_x(ob.zoneLabel, time)
+
+// ==================================================================================
+// ALERTS
+// ==================================================================================
+
+alertcondition(validDemand, "Demand Order Block", "New DEMAND Order Block created!")
+alertcondition(validSupply, "Supply Order Block", "New SUPPLY Order Block created!")

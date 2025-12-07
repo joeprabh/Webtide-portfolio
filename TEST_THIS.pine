@@ -1,0 +1,18 @@
+//@version=6
+indicator("TEST - You Will See Boxes", overlay=true, max_boxes_count=50)
+
+// SIMPLE: Just show a box on EVERY big green or red candle
+atr = ta.atr(14)
+body = math.abs(close - open)
+
+// Any candle with body > 1.0x ATR
+isBigGreen = close > open and body > atr
+isBigRed = close < open and body > atr
+
+// Draw GREEN box on big green candles
+if isBigGreen
+    box.new(time, high, time + (time - time[1]) * 10, low, bgcolor=color.new(color.green, 80), border_color=color.green, extend=extend.right, xloc=xloc.bar_time)
+
+// Draw RED box on big red candles
+if isBigRed
+    box.new(time, high, time + (time - time[1]) * 10, low, bgcolor=color.new(color.red, 80), border_color=color.red, extend=extend.right, xloc=xloc.bar_time)

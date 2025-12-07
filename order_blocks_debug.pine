@@ -1,0 +1,309 @@
+// This source code is subject to the terms of the Mozilla Public License 2.0 at https://mozilla.org/MPL/2.0/
+// © Order Blocks - Debug Version (Shows What's Happening)
+//@version=6
+indicator("Order Blocks - DEBUG", overlay=true, max_boxes_count=100, max_labels_count=100)
+
+// ==================================================================================
+// INPUTS - START WITH RELAXED SETTINGS
+// ==================================================================================
+
+impulseMultiplier = input.float(1.5, "Impulse Multiplier (LOWER = MORE ZONES)", minval=1.0, maxval=3.0, step=0.1,
+     tooltip="Start with 1.5 to see more zones, increase to 2.0 later")
+bosLookback = input.int(10, "Structure Break Lookback", minval=5, maxval=20)
+atrPeriod = input.int(14, "ATR Period", minval=10, maxval=50)
+
+requireFVG = input.bool(false, "Require FVG (Fair Value Gap)?", 
+     tooltip="Start with OFF to see zones more easily")
+requireBOS = input.bool(true, "Require Break of Structure?",
+     tooltip="Keep ON for quality zones")
+
+showBoxes = input.bool(true, "Show Zone Boxes")
+showLabels = input.bool(true, "Show Labels")
+showDebugInfo = input.bool(true, "Show Debug Table")
+
+demandColor = input.color(color.new(color.green, 60), "Demand Color")
+supplyColor = input.color(color.new(color.red, 60), "Supply Color")
+
+// ==================================================================================
+// TYPE
+// ==================================================================================
+
+type Zone
+    float top
+    float bottom
+    int barIndex
+    int barTime
+    bool isSupply
+    bool isFresh
+    bool hasFVG
+    bool hasBOS
+
+// ==================================================================================
+// VARIABLES
+// ==================================================================================
+
+var array<Zone> zones = array.new<Zone>()
+var array<box> boxes = array.new<box>()
+var array<label> labels = array.new<label>()
+
+// Stats
+var int totalDemandDetected = 0
+var int totalSupplyDetected = 0
+
+// ==================================================================================
+// CALCULATIONS
+// ==================================================================================
+
+atr = ta.atr(atrPeriod)
+
+// Candle properties
+isBull = close > open
+isBear = close < open
+body = math.abs(close - open)
+candleRange = high - low
+
+// Previous candle
+isBull1 = bar_index >= 1 ? close[1] > open[1] : false
+isBear1 = bar_index >= 1 ? close[1] < open[1] : false
+
+// ==================================================================================
+// RULE 1: EXTENDED RANGE CANDLE (IMPULSE)
+// ==================================================================================
+
+isExplosiveBull = isBull and body > (atr * impulseMultiplier) and body > (candleRange * 0.5)
+isExplosiveBear = isBear and body > (atr * impulseMultiplier) and body > (candleRange * 0.5)
+
+// ==================================================================================
+// BASE CANDLE DETECTION
+// ==================================================================================
+
+isDemandBase = bar_index >= 1 and isBear1 and isExplosiveBull  // Red -> Green
+isSupplyBase = bar_index >= 1 and isBull1 and isExplosiveBear  // Green -> Red
+
+// ==================================================================================
+// RULE 2: FAIR VALUE GAP (OPTIONAL)
+// ==================================================================================
+
+hasDemandFVG = false
+hasSupplyFVG = false
+
+if bar_index >= 2
+    // Demand FVG: high of 2 candles ago < low of current
+    if high[2] < low
+        hasDemandFVG := true
+    
+    // Supply FVG: low of 2 candles ago > high of current
+    if low[2] > high
+        hasSupplyFVG := true
+
+// ==================================================================================
+// RULE 3: BREAK OF STRUCTURE
+// ==================================================================================
+
+demandBOS = false
+supplyBOS = false
+
+if bar_index >= bosLookback
+    float highestHigh = high[1]
+    float lowestLow = low[1]
+    
+    for i = 1 to bosLookback
+        if high[i] > highestHigh
+            highestHigh := high[i]
+        if low[i] < lowestLow
+            lowestLow := low[i]
+    
+    if close > highestHigh
+        demandBOS := true
+    if close < lowestLow
+        supplyBOS := true
+
+// ==================================================================================
+// VALIDATION (CHECK WHAT'S REQUIRED)
+// ==================================================================================
+
+validDemand = isDemandBase and 
+              (not requireBOS or demandBOS) and 
+              (not requireFVG or hasDemandFVG)
+
+validSupply = isSupplyBase and 
+              (not requireBOS or supplyBOS) and 
+              (not requireFVG or hasSupplyFVG)
+
+// ==================================================================================
+// ZONE CREATION
+// ==================================================================================
+
+if validDemand and bar_index >= 1
+    totalDemandDetected += 1
+    
+    // DEMAND ZONE: Draw on RED base candle [1]
+    float zoneTop = math.max(close[1], open[1])     // Body high
+    float zoneBottom = low[1]                        // Wick low
+    
+    newZone = Zone.new(
+         top = zoneTop,
+         bottom = zoneBottom,
+         barIndex = bar_index - 1,
+         barTime = time[1],
+         isSupply = false,
+         isFresh = true,
+         hasFVG = hasDemandFVG,
+         hasBOS = demandBOS
+     )
+    array.unshift(zones, newZone)
+
+if validSupply and bar_index >= 1
+    totalSupplyDetected += 1
+    
+    // SUPPLY ZONE: Draw on GREEN base candle [1]
+    float zoneTop = high[1]                          // Wick high
+    float zoneBottom = math.min(close[1], open[1])   // Body low
+    
+    newZone = Zone.new(
+         top = zoneTop,
+         bottom = zoneBottom,
+         barIndex = bar_index - 1,
+         barTime = time[1],
+         isSupply = true,
+         isFresh = true,
+         hasFVG = hasSupplyFVG,
+         hasBOS = supplyBOS
+     )
+    array.unshift(zones, newZone)
+
+// ==================================================================================
+// MITIGATION
+// ==================================================================================
+
+if array.size(zones) > 0
+    for i = 0 to array.size(zones) - 1
+        zone = array.get(zones, i)
+        if low <= zone.top and high >= zone.bottom
+            zone.isFresh := false
+        array.set(zones, i, zone)
+
+// ==================================================================================
+// CLEANUP
+// ==================================================================================
+
+if array.size(zones) > 0
+    for i = array.size(zones) - 1 to 0
+        zone = array.get(zones, i)
+        if not zone.isFresh
+            array.remove(zones, i)
+
+while array.size(zones) > 50
+    array.pop(zones)
+
+// ==================================================================================
+// VISUALIZATION
+// ==================================================================================
+
+if barstate.islast
+    // Clear
+    for b in boxes
+        box.delete(b)
+    array.clear(boxes)
+    for l in labels
+        label.delete(l)
+    array.clear(labels)
+    
+    // Draw zones
+    if showBoxes and array.size(zones) > 0
+        for i = 0 to array.size(zones) - 1
+            zone = array.get(zones, i)
+            
+            zoneBox = box.new(
+                 left = zone.barTime,
+                 top = zone.top,
+                 right = time,
+                 bottom = zone.bottom,
+                 border_color = zone.isSupply ? color.red : color.green,
+                 bgcolor = zone.isSupply ? supplyColor : demandColor,
+                 border_width = 2,
+                 extend = extend.right,
+                 xloc = xloc.bar_time
+             )
+            array.push(boxes, zoneBox)
+            
+            if showLabels
+                string txt = zone.isSupply ? "SUPPLY" : "DEMAND"
+                if zone.hasFVG
+                    txt := txt + " FVG"
+                
+                zoneLabel = label.new(
+                     x = time,
+                     y = zone.isSupply ? zone.top : zone.bottom,
+                     text = txt,
+                     style = zone.isSupply ? label.style_label_down : label.style_label_up,
+                     color = zone.isSupply ? color.new(color.red, 10) : color.new(color.green, 10),
+                     textcolor = color.white,
+                     size = size.normal,
+                     xloc = xloc.bar_time
+                 )
+                array.push(labels, zoneLabel)
+
+// ==================================================================================
+// DEBUG TABLE
+// ==================================================================================
+
+var table debugTable = table.new(position.top_right, 2, 11, bgcolor=color.new(color.black, 70), border_width=1)
+
+if barstate.islast and showDebugInfo
+    table.cell(debugTable, 0, 0, "DEBUG INFO", text_color=color.white, bgcolor=color.blue, text_size=size.normal)
+    table.cell(debugTable, 1, 0, "", bgcolor=color.blue)
+    
+    table.cell(debugTable, 0, 1, "ATR Value", text_color=color.white)
+    table.cell(debugTable, 1, 1, str.tostring(atr, "#.#####"), text_color=color.yellow)
+    
+    table.cell(debugTable, 0, 2, "Min Body Size", text_color=color.white)
+    table.cell(debugTable, 1, 2, str.tostring(atr * impulseMultiplier, "#.#####"), text_color=color.yellow)
+    
+    table.cell(debugTable, 0, 3, "Current Body", text_color=color.white)
+    table.cell(debugTable, 1, 3, str.tostring(body, "#.#####"), 
+         text_color = body > (atr * impulseMultiplier) ? color.lime : color.gray)
+    
+    table.cell(debugTable, 0, 4, "Total Demand", text_color=color.white)
+    table.cell(debugTable, 1, 4, str.tostring(totalDemandDetected), text_color=color.lime)
+    
+    table.cell(debugTable, 0, 5, "Total Supply", text_color=color.white)
+    table.cell(debugTable, 1, 5, str.tostring(totalSupplyDetected), text_color=color.orange)
+    
+    table.cell(debugTable, 0, 6, "Active Zones", text_color=color.white)
+    table.cell(debugTable, 1, 6, str.tostring(array.size(zones)), text_color=color.aqua)
+    
+    table.cell(debugTable, 0, 7, "Demand Base", text_color=color.white)
+    table.cell(debugTable, 1, 7, isDemandBase ? "YES" : "No", 
+         text_color = isDemandBase ? color.lime : color.gray)
+    
+    table.cell(debugTable, 0, 8, "Supply Base", text_color=color.white)
+    table.cell(debugTable, 1, 8, isSupplyBase ? "YES" : "No", 
+         text_color = isSupplyBase ? color.orange : color.gray)
+    
+    table.cell(debugTable, 0, 9, "FVG", text_color=color.white)
+    string fvgTxt = hasDemandFVG ? "Demand" : (hasSupplyFVG ? "Supply" : "None")
+    table.cell(debugTable, 1, 9, fvgTxt, text_color=color.aqua)
+    
+    table.cell(debugTable, 0, 10, "BOS", text_color=color.white)
+    string bosTxt = demandBOS ? "Demand" : (supplyBOS ? "Supply" : "None")
+    table.cell(debugTable, 1, 10, bosTxt, text_color=color.aqua)
+
+// ==================================================================================
+// VISUAL MARKERS
+// ==================================================================================
+
+// Show when zones form
+plotshape(validDemand, "Demand", shape.triangleup, location.belowbar, color.green, size=size.large, text="DEMAND")
+plotshape(validSupply, "Supply", shape.triangledown, location.abovebar, color.red, size=size.large, text="SUPPLY")
+
+// Show base candle detection
+bgcolor(isDemandBase ? color.new(color.green, 95) : na, title="Demand Base")
+bgcolor(isSupplyBase ? color.new(color.red, 95) : na, title="Supply Base")
+
+// ==================================================================================
+// ALERTS
+// ==================================================================================
+
+alertcondition(validDemand, "Demand OB", "Demand Order Block Created!")
+alertcondition(validSupply, "Supply OB", "Supply Order Block Created!")

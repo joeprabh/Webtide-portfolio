@@ -1,0 +1,61 @@
+//@version=6
+indicator("Show ALL Zones - No Delete", overlay=true, max_boxes_count=100, max_labels_count=100)
+
+// NO RULES - NO DELETION - SHOW EVERYTHING
+
+// ==================================================================================
+// PATTERN DETECTION
+// ==================================================================================
+// DEMAND: Red candle [1] followed by Green candle [0]
+isDemand = bar_index >= 1 and close[1] < open[1] and close > open
+
+// SUPPLY: Green candle [1] followed by Red candle [0]
+isSupply = bar_index >= 1 and close[1] > open[1] and close < open
+
+// ==================================================================================
+// DRAW DEMAND ZONE (Every Red→Green pattern)
+// ==================================================================================
+if isDemand
+    // Draw on RED base candle
+    float top = open[1]      // Body high of red candle
+    float bottom = low[1]    // Wick low
+    
+    box.new(time[1], top, time, bottom, 
+         bgcolor=color.new(color.green, 85), 
+         border_color=color.green, 
+         border_width=2, 
+         extend=extend.right, 
+         xloc=xloc.bar_time)
+    
+    label.new(time, bottom, "D", 
+         style=label.style_label_up, 
+         color=color.green, 
+         textcolor=color.white, 
+         size=size.small,
+         xloc=xloc.bar_time)
+
+// ==================================================================================
+// DRAW SUPPLY ZONE (Every Green→Red pattern)
+// ==================================================================================
+if isSupply
+    // Draw on GREEN base candle
+    float top = high[1]      // Wick high
+    float bottom = open[1]   // Body low of green candle
+    
+    box.new(time[1], top, time, bottom, 
+         bgcolor=color.new(color.red, 85), 
+         border_color=color.red, 
+         border_width=2, 
+         extend=extend.right, 
+         xloc=xloc.bar_time)
+    
+    label.new(time, top, "S", 
+         style=label.style_label_down, 
+         color=color.red, 
+         textcolor=color.white, 
+         size=size.small,
+         xloc=xloc.bar_time)
+
+// ==================================================================================
+// NO DELETION - ZONES STAY FOREVER
+// ==================================================================================

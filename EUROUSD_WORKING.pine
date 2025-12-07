@@ -1,0 +1,145 @@
+//@version=6
+indicator("EUR/USD Order Blocks - Working", overlay=true, max_boxes_count=50, max_labels_count=50)
+
+// ==================================================================================
+// SETTINGS TUNED FOR EUR/USD 4H AND 1H
+// ==================================================================================
+bodyMultiplier = input.float(1.3, "Body Multiplier", minval=1.0, maxval=2.5, step=0.1,
+     tooltip="1.3 works for EUR/USD. Higher = fewer zones")
+requireFVG = input.bool(false, "Require FVG (Rule 3)", 
+     tooltip="Turn ON for strictest. OFF shows more zones")
+bosLookback = input.int(10, "BOS Lookback")
+maxZones = input.int(25, "Max Zones")
+
+demandColor = color.green
+supplyColor = color.red
+
+// ==================================================================================
+// STORAGE
+// ==================================================================================
+type OB
+    box b
+    label l
+    int created
+    float top
+    float bottom
+
+var array<OB> obs = array.new<OB>()
+
+// ==================================================================================
+// CALCULATIONS
+// ==================================================================================
+atr = ta.atr(14)
+minBody = atr * bodyMultiplier
+
+// ==================================================================================
+// DETECT ZONES WITH ALL RULES
+// ==================================================================================
+if bar_index >= bosLookback + 2
+    
+    // RULE 1: Base Pattern
+    demandBase = close[1] < open[1] and close > open
+    supplyBase = close[1] > open[1] and close < open
+    
+    // RULE 2: Explosive Impulse
+    body = math.abs(close - open)
+    explosive = body > minBody
+    
+    // RULE 3: Fair Value Gap (OPTIONAL)
+    demandFVG = high[2] < low
+    supplyFVG = low[2] > high
+    fvgOK_demand = not requireFVG or demandFVG
+    fvgOK_supply = not requireFVG or supplyFVG
+    
+    // RULE 4: Break of Structure
+    hh = ta.highest(high, bosLookback)
+    ll = ta.lowest(low, bosLookback)
+    bosUp = close > hh[1]
+    bosDown = close < ll[1]
+    
+    // ALL RULES CHECK
+    validDemand = demandBase and explosive and fvgOK_demand and bosUp
+    validSupply = supplyBase and explosive and fvgOK_supply and bosDown
+    
+    // DRAW DEMAND
+    if validDemand
+        top = open[1]
+        bottom = low[1]
+        
+        b = box.new(bar_index[1], top, bar_index + 40, bottom,
+             bgcolor=color.new(demandColor, 85),
+             border_color=demandColor,
+             border_width=2)
+        
+        l = label.new(bar_index[1] + 20, bottom, "BUY",
+             style=label.style_label_up,
+             color=color.new(demandColor, 20),
+             textcolor=color.white,
+             size=size.tiny)
+        
+        array.push(obs, OB.new(b, l, bar_index[1], top, bottom))
+    
+    // DRAW SUPPLY
+    if validSupply
+        top = high[1]
+        bottom = open[1]
+        
+        b = box.new(bar_index[1], top, bar_index + 40, bottom,
+             bgcolor=color.new(supplyColor, 85),
+             border_color=supplyColor,
+             border_width=2)
+        
+        l = label.new(bar_index[1] + 20, top, "SELL",
+             style=label.style_label_down,
+             color=color.new(supplyColor, 20),
+             textcolor=color.white,
+             size=size.tiny)
+        
+        array.push(obs, OB.new(b, l, bar_index[1], top, bottom))
+
+// ==================================================================================
+// DELETE TOUCHED ZONES
+// ==================================================================================
+if array.size(obs) > 0
+    for i = array.size(obs) - 1 to 0
+        ob = array.get(obs, i)
+        if bar_index > ob.created and low <= ob.top and high >= ob.bottom
+            box.delete(ob.b)
+            label.delete(ob.l)
+            array.remove(obs, i)
+
+// ==================================================================================
+// LIMIT ZONES
+// ==================================================================================
+while array.size(obs) > maxZones
+    ob = array.shift(obs)
+    box.delete(ob.b)
+    label.delete(ob.l)
+
+// ==================================================================================
+// STATUS
+// ==================================================================================
+var table t = table.new(position.top_right, 2, 5)
+if barstate.islast
+    table.cell(t, 0, 0, "ACTIVE ZONES", bgcolor=color.new(color.blue, 50), text_color=color.white, text_size=size.small)
+    table.cell(t, 1, 0, str.tostring(array.size(obs)), bgcolor=color.new(color.blue, 50), text_color=color.yellow, text_size=size.normal)
+    
+    table.cell(t, 0, 1, "ATR", bgcolor=color.new(color.black, 70), text_color=color.white)
+    table.cell(t, 1, 1, str.tostring(math.round(atr, 5)), bgcolor=color.new(color.black, 70), text_color=color.aqua)
+    
+    table.cell(t, 0, 2, "Multiplier", bgcolor=color.new(color.black, 70), text_color=color.white)
+    table.cell(t, 1, 2, str.tostring(bodyMultiplier), bgcolor=color.new(color.black, 70), text_color=color.aqua)
+    
+    table.cell(t, 0, 3, "Min Body", bgcolor=color.new(color.black, 70), text_color=color.white)
+    table.cell(t, 1, 3, str.tostring(math.round(minBody, 5)), bgcolor=color.new(color.black, 70), text_color=color.orange)
+    
+    table.cell(t, 0, 4, "FVG", bgcolor=color.new(color.black, 70), text_color=color.white)
+    table.cell(t, 1, 4, requireFVG ? "ON (Strict)" : "OFF", 
+         bgcolor=color.new(color.black, 70), 
+         text_color=requireFVG ? color.red : color.lime)
+
+// ==================================================================================
+// ALERTS
+// ==================================================================================
+alertcondition(validDemand, "New Demand", "Demand Order Block Created")
+alertcondition(validSupply, "New Supply", "Supply Order Block Created")

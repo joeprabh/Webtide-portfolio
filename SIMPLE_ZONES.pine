@@ -1,0 +1,61 @@
+//@version=6
+indicator("Simple Order Blocks", overlay=true, max_boxes_count=50)
+
+// VERY SIMPLE - WILL SHOW ZONES
+multiplier = input.float(1.2, "Body Multiplier", minval=0.8, maxval=2.0)
+maxZones = input.int(30, "Max Zones")
+
+var box[] boxes = array.new<box>()
+var label[] labels = array.new<label>()
+
+if bar_index >= 10
+    // Average body size
+    avgBody = ta.sma(math.abs(close - open), 20)
+    currBody = math.abs(close - open)
+    
+    // DEMAND: Red then Green, big green body
+    demand = close[1] < open[1] and close > open and currBody > avgBody * multiplier
+    
+    // SUPPLY: Green then Red, big red body
+    supply = close[1] > open[1] and close < open and currBody > avgBody * multiplier
+    
+    // DRAW DEMAND
+    if demand
+        b = box.new(bar_index[1], open[1], bar_index + 20, low[1],
+             bgcolor=color.new(color.green, 85),
+             border_color=color.green,
+             border_width=2)
+        
+        l = label.new(bar_index, low[1], "BUY",
+             style=label.style_label_up,
+             color=color.green,
+             textcolor=color.white)
+        
+        array.push(boxes, b)
+        array.push(labels, l)
+    
+    // DRAW SUPPLY
+    if supply
+        b = box.new(bar_index[1], high[1], bar_index + 20, open[1],
+             bgcolor=color.new(color.red, 85),
+             border_color=color.red,
+             border_width=2)
+        
+        l = label.new(bar_index, high[1], "SELL",
+             style=label.style_label_down,
+             color=color.red,
+             textcolor=color.white)
+        
+        array.push(boxes, b)
+        array.push(labels, l)
+
+// Keep max zones
+while array.size(boxes) > maxZones
+    box.delete(array.shift(boxes))
+    label.delete(array.shift(labels))
+
+// SHOW COUNT
+var table t = table.new(position.top_right, 2, 1)
+if barstate.islast
+    table.cell(t, 0, 0, "Zones: ", bgcolor=color.black, text_color=color.white)
+    table.cell(t, 1, 0, str.tostring(array.size(boxes)), bgcolor=color.black, text_color=color.yellow)

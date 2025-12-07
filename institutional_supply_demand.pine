@@ -1,0 +1,548 @@
+// This source code is subject to the terms of the Mozilla Public License 2.0 at https://mozilla.org/MPL/2.0/
+// © Institutional Supply & Demand - Golden Checklist
+//@version=6
+indicator("Institutional Supply & Demand Zones", overlay=true, max_boxes_count=500, max_lines_count=500)
+
+// ==================================================================================
+// INPUTS & SETTINGS
+// ==================================================================================
+
+// Golden Checklist Parameters
+impulseMultiplier = input.float(1.5, "1. Impulse Multiplier (vs Avg Range)", minval=1.0, maxval=5.0, 
+     tooltip="How much larger the impulse candle must be vs average. Higher = more explosive requirement.")
+swingLookback = input.int(10, "2. Swing Structure Lookback", minval=5, maxval=50,
+     tooltip="Candles to look back for swing high/low detection.")
+maxBaseCandles = input.int(3, "4. Max Base Candles", minval=1, maxval=5,
+     tooltip="Maximum candles at level before impulse. More = rejection.")
+liquiditySweepLookback = input.int(5, "5. Liquidity Sweep Lookback", minval=3, maxval=20,
+     tooltip="How far back to check for swept highs/lows.")
+
+// Zone Drawing Settings
+wickReductionPercent = input.float(0.5, "Wick Reduction %", minval=0.0, maxval=1.0, step=0.1,
+     tooltip="If wick is 2x+ body, ignore bottom X% of wick. 0.5 = ignore 50%.")
+avgRangePeriod = input.int(20, "Average Range Period", minval=10, maxval=100)
+
+// Visual Settings
+demandColor = input.color(color.new(color.green, 85), "Demand Zone Color")
+supplyColor = input.color(color.new(color.red, 85), "Supply Zone Color")
+showLabels = input.bool(true, "Show Zone Labels")
+maxZonesToShow = input.int(10, "Max Zones to Display", minval=1, maxval=50)
+
+// Chart Cleanliness Settings
+showTouchedZones = input.bool(false, "Show Touched Zones (Recommended: OFF)", 
+     tooltip="Keep OFF for clean charts. Touched zones = filled orders.")
+maxZoneAgeDays = input.int(30, "Max Zone Age (Days)", minval=1, maxval=365,
+     tooltip="Delete zones older than X days. Keeps chart clean.")
+
+// ==================================================================================
+// ZONE TYPE DEFINITION
+// ==================================================================================
+
+type ZoneData
+    float top
+    float bottom
+    int startBar
+    bool isSupply
+    bool isFresh
+    int touchCount
+    bool hasLiquiditySweep
+    string timeframeLabel  // "H4" or "H1" etc.
+
+// ==================================================================================
+// VARIABLES & ARRAYS
+// ==================================================================================
+
+var array<ZoneData> demandZones = array.new<ZoneData>()
+var array<ZoneData> supplyZones = array.new<ZoneData>()
+var array<box> zoneBoxes = array.new<box>()
+var array<label> zoneLabels = array.new<label>()
+
+// ==================================================================================
+// TIMEFRAME DETECTION
+// ==================================================================================
+
+// Get clean timeframe label for zones
+getTimeframeLabel() =>
+    string tf = timeframe.period
+    string label = ""
+    
+    // Handle common timeframes
+    if tf == "240"
+        label := "H4"
+    else if tf == "60"
+        label := "H1"
+    else if tf == "15"
+        label := "M15"
+    else if tf == "5"
+        label := "M5"
+    else if tf == "1"
+        label := "M1"
+    else if tf == "D" or tf == "1D"
+        label := "D1"
+    else if tf == "W" or tf == "1W"
+        label := "W1"
+    else
+        label := tf
+    
+    label
+
+currentTimeframeLabel = getTimeframeLabel()
+
+// ==================================================================================
+// HELPER FUNCTIONS
+// ==================================================================================
+
+// Calculate Average True Range
+calcAvgRange() =>
+    float sum = 0.0
+    int validBars = math.min(avgRangePeriod, bar_index)
+    if validBars > 0
+        for i = 1 to validBars
+            sum += high[i] - low[i]
+        sum / validBars
+    else
+        high - low
+
+avgRange = calcAvgRange()
+
+// Detect Swing High with proper bounds checking
+isSwingHigh(lookback) =>
+    // Need enough bars for lookback
+    if bar_index < (lookback * 2 + 1)
+        false
+    else
+        bool isHigh = true
+        float pivotHigh = high[lookback]
+        
+        // Check left side
+        for i = 0 to lookback - 1
+            if high[i] >= pivotHigh
+                isHigh := false
+                break
+        
+        // Check right side
+        if isHigh
+            for i = lookback + 1 to lookback * 2
+                if high[i] >= pivotHigh
+                    isHigh := false
+                    break
+        isHigh
+
+// Detect Swing Low with proper bounds checking
+isSwingLow(lookback) =>
+    // Need enough bars for lookback
+    if bar_index < (lookback * 2 + 1)
+        false
+    else
+        bool isLow = true
+        float pivotLow = low[lookback]
+        
+        // Check left side
+        for i = 0 to lookback - 1
+            if low[i] <= pivotLow
+                isLow := false
+                break
+        
+        // Check right side
+        if isLow
+            for i = lookback + 1 to lookback * 2
+                if low[i] <= pivotLow
+                    isLow := false
+                    break
+        isLow
+
+// Get Recent Swing High
+getRecentSwingHigh(lookback) =>
+    float swingHigh = na
+    // Only search if we have enough history
+    int maxLookback = math.min(lookback * 3, bar_index - lookback * 2 - 1)
+    
+    if maxLookback >= lookback
+        for i = lookback to maxLookback
+            if isSwingHigh(i)
+                swingHigh := high[i]
+                break
+    swingHigh
+
+// Get Recent Swing Low
+getRecentSwingLow(lookback) =>
+    float swingLow = na
+    // Only search if we have enough history
+    int maxLookback = math.min(lookback * 3, bar_index - lookback * 2 - 1)
+    
+    if maxLookback >= lookback
+        for i = lookback to maxLookback
+            if isSwingLow(i)
+                swingLow := low[i]
+                break
+    swingLow
+
+// ==================================================================================
+// CHECKLIST #1: EXPLOSIVE IMPULSE
+// ==================================================================================
+
+candle_range = high - low
+body_size = math.abs(close - open)
+isBullishCandle = close > open
+isBearishCandle = close < open
+
+// Explosive move detection
+isExplosiveBullish = isBullishCandle and candle_range > (avgRange * impulseMultiplier) and body_size > (candle_range * 0.6)
+isExplosiveBearish = isBearishCandle and candle_range > (avgRange * impulseMultiplier) and body_size > (candle_range * 0.6)
+
+// ==================================================================================
+// CHECKLIST #2: ACCOMPLISHMENT (Break of Structure)
+// ==================================================================================
+
+recentSwingHigh = getRecentSwingHigh(swingLookback)
+recentSwingLow = getRecentSwingLow(swingLookback)
+
+// Check if impulse broke structure
+brokeBullishStructure = not na(recentSwingHigh) and high > recentSwingHigh
+brokeBearishStructure = not na(recentSwingLow) and low < recentSwingLow
+
+// ==================================================================================
+// CHECKLIST #4: TIME AT LEVEL (Tight Base)
+// ==================================================================================
+
+// Count consolidation candles before current
+countBaseCandles() =>
+    int count = 0
+    int maxBars = math.min(maxBaseCandles, bar_index)
+    
+    for i = 1 to maxBars
+        float candleRange = high[i] - low[i]
+        // If candle is small
+        if candleRange < (avgRange * 0.8)
+            count += 1
+        else
+            break
+    count
+
+baseCandles = countBaseCandles()
+hasTightBase = baseCandles >= 1 and baseCandles <= maxBaseCandles
+
+// ==================================================================================
+// CHECKLIST #5: LIQUIDITY SWEEP
+// ==================================================================================
+
+// Check if recent price action swept a low then reversed up
+checkLiquiditySweepBullish() =>
+    bool swept = false
+    int maxBars = math.min(liquiditySweepLookback, bar_index - 1)
+    
+    if maxBars >= 2
+        for i = 2 to maxBars
+            // Look for a low that was swept (price went below then reversed)
+            if low[i] < low[i+1] and low[i] < low[i-1]
+                swept := true
+                break
+    swept
+
+// Check if recent price action swept a high then reversed down
+checkLiquiditySweepBearish() =>
+    bool swept = false
+    int maxBars = math.min(liquiditySweepLookback, bar_index - 1)
+    
+    if maxBars >= 2
+        for i = 2 to maxBars
+            // Look for a high that was swept (price went above then reversed)
+            if high[i] > high[i+1] and high[i] > high[i-1]
+                swept := true
+                break
+    swept
+
+hasLiqSweepBullish = checkLiquiditySweepBullish()
+hasLiqSweepBearish = checkLiquiditySweepBearish()
+
+// ==================================================================================
+// ZONE CALCULATION (Precise Drawing Rules)
+// ==================================================================================
+
+calculateDemandZone() =>
+    float zoneTop = na
+    float zoneBottom = na
+    
+    if bar_index >= 1
+        // Find the last red/small candle before the explosion
+        if close[1] <= open[1]  // Red candle
+            zoneTop := math.max(close[1], open[1])  // Body high
+            zoneBottom := low[1]  // Wick low
+            
+            // Apply wick reduction if wick is 2x+ body
+            float bodySize = math.abs(close[1] - open[1])
+            float wickSize = zoneTop - zoneBottom
+            
+            if wickSize > (bodySize * 2) and bodySize > 0
+                // Ignore bottom X% of wick
+                zoneBottom := zoneBottom + (wickSize * wickReductionPercent)
+        else  // Green or small candle
+            zoneTop := high[1]
+            zoneBottom := low[1]
+    
+    [zoneTop, zoneBottom]
+
+calculateSupplyZone() =>
+    float zoneTop = na
+    float zoneBottom = na
+    
+    if bar_index >= 1
+        // Find the last green/small candle before the explosion
+        if close[1] >= open[1]  // Green candle
+            zoneBottom := math.min(close[1], open[1])  // Body low
+            zoneTop := high[1]  // Wick high
+            
+            // Apply wick reduction if wick is 2x+ body
+            float bodySize = math.abs(close[1] - open[1])
+            float wickSize = zoneTop - zoneBottom
+            
+            if wickSize > (bodySize * 2) and bodySize > 0
+                // Ignore top X% of wick
+                zoneTop := zoneTop - (wickSize * wickReductionPercent)
+        else  // Red or small candle
+            zoneTop := high[1]
+            zoneBottom := low[1]
+    
+    [zoneTop, zoneBottom]
+
+// ==================================================================================
+// ZONE DETECTION & VALIDATION
+// ==================================================================================
+
+// Only start detecting after enough bars for proper analysis
+enoughHistory = bar_index >= (swingLookback * 2 + 1)
+
+// DEMAND ZONE (Buy Zone) - All 5 Criteria
+demandZoneDetected = enoughHistory and 
+                     isExplosiveBullish and 
+                     brokeBullishStructure and 
+                     hasTightBase
+
+// SUPPLY ZONE (Sell Zone) - All 5 Criteria  
+supplyZoneDetected = enoughHistory and 
+                     isExplosiveBearish and 
+                     brokeBearishStructure and 
+                     hasTightBase
+
+// Create new zones
+if demandZoneDetected
+    [zTop, zBottom] = calculateDemandZone()
+    if not na(zTop) and not na(zBottom) and zTop > zBottom
+        newZone = ZoneData.new(
+             top = zTop,
+             bottom = zBottom,
+             startBar = bar_index,
+             isSupply = false,
+             isFresh = true,
+             touchCount = 0,
+             hasLiquiditySweep = hasLiqSweepBullish,
+             timeframeLabel = currentTimeframeLabel
+         )
+        array.unshift(demandZones, newZone)
+
+if supplyZoneDetected
+    [zTop, zBottom] = calculateSupplyZone()
+    if not na(zTop) and not na(zBottom) and zTop > zBottom
+        newZone = ZoneData.new(
+             top = zTop,
+             bottom = zBottom,
+             startBar = bar_index,
+             isSupply = true,
+             isFresh = true,
+             touchCount = 0,
+             hasLiquiditySweep = hasLiqSweepBearish,
+             timeframeLabel = currentTimeframeLabel
+         )
+        array.unshift(supplyZones, newZone)
+
+// ==================================================================================
+// CHECKLIST #3: FRESHNESS & R.A.F.T. FILTER
+// ==================================================================================
+
+// Update zone freshness
+if array.size(demandZones) > 0
+    for i = 0 to array.size(demandZones) - 1
+        zone = array.get(demandZones, i)
+        // Check if price has returned to zone
+        if low <= zone.top and high >= zone.bottom
+            zone.touchCount += 1
+            // Mark as NOT fresh after first touch
+            if zone.touchCount >= 1
+                zone.isFresh := false
+        array.set(demandZones, i, zone)
+
+if array.size(supplyZones) > 0
+    for i = 0 to array.size(supplyZones) - 1
+        zone = array.get(supplyZones, i)
+        // Check if price has returned to zone
+        if low <= zone.top and high >= zone.bottom
+            zone.touchCount += 1
+            // Mark as NOT fresh after first touch
+            if zone.touchCount >= 1
+                zone.isFresh := false
+        array.set(supplyZones, i, zone)
+
+// ==================================================================================
+// ZONE CLEANUP (Remove old/invalid zones)
+// ==================================================================================
+
+// Calculate max age in bars (approximate)
+int barsPerDay = timeframe.in_seconds() > 0 ? int(86400 / timeframe.in_seconds()) : 24
+int maxAgeBars = maxZoneAgeDays * barsPerDay
+
+// Remove non-fresh demand zones (IMMEDIATE deletion rule)
+if array.size(demandZones) > 0
+    int i = 0
+    while i < array.size(demandZones)
+        zone = array.get(demandZones, i)
+        int zoneAge = bar_index - zone.startBar
+        
+        // DELETE if: 1) Touched, OR 2) Too old
+        if (not zone.isFresh and not showTouchedZones) or (zoneAge > maxAgeBars)
+            array.remove(demandZones, i)
+        else
+            i += 1
+
+// Remove non-fresh supply zones (IMMEDIATE deletion rule)
+if array.size(supplyZones) > 0
+    int i = 0
+    while i < array.size(supplyZones)
+        zone = array.get(supplyZones, i)
+        int zoneAge = bar_index - zone.startBar
+        
+        // DELETE if: 1) Touched, OR 2) Too old
+        if (not zone.isFresh and not showTouchedZones) or (zoneAge > maxAgeBars)
+            array.remove(supplyZones, i)
+        else
+            i += 1
+
+// Limit total zones
+while array.size(demandZones) > maxZonesToShow
+    array.pop(demandZones)
+
+while array.size(supplyZones) > maxZonesToShow
+    array.pop(supplyZones)
+
+// ==================================================================================
+// VISUALIZATION
+// ==================================================================================
+
+// Clear old drawings
+if barstate.islast
+    while array.size(zoneBoxes) > 0
+        box.delete(array.shift(zoneBoxes))
+    
+    while array.size(zoneLabels) > 0
+        label.delete(array.shift(zoneLabels))
+    
+    // Draw Demand Zones
+    if array.size(demandZones) > 0
+        for i = 0 to array.size(demandZones) - 1
+            zone = array.get(demandZones, i)
+            // Only show FRESH zones (or touched if user enables it)
+            if zone.isFresh or showTouchedZones
+                // Draw box
+                boxColor = zone.isFresh ? demandColor : color.new(color.green, 95)
+                zoneBox = box.new(
+                     left = zone.startBar,
+                     top = zone.top,
+                     right = bar_index + 20,
+                     bottom = zone.bottom,
+                     border_color = color.new(color.green, zone.isFresh ? 50 : 90),
+                     bgcolor = boxColor,
+                     border_width = zone.isFresh ? 1 : 1,
+                     extend = extend.right
+                 )
+                array.push(zoneBoxes, zoneBox)
+                
+                // Draw label - MINIMAL & RIGHT-ALIGNED
+                if showLabels
+                    // Clean label: "H4 Dem" or "H1 Dem 🎯"
+                    string baseLabel = zone.timeframeLabel + " Dem"
+                    string finalLabel = zone.hasLiquiditySweep ? baseLabel + " 🎯" : baseLabel
+                    
+                    zoneLabel = label.new(
+                         x = bar_index,  // RIGHT EDGE (current bar)
+                         y = zone.bottom,
+                         text = finalLabel,
+                         style = label.style_label_up,
+                         color = color.new(color.green, 30),
+                         textcolor = color.white,
+                         size = size.small,
+                         textalign = text.align_right
+                     )
+                    array.push(zoneLabels, zoneLabel)
+    
+    // Draw Supply Zones
+    if array.size(supplyZones) > 0
+        for i = 0 to array.size(supplyZones) - 1
+            zone = array.get(supplyZones, i)
+            // Only show FRESH zones (or touched if user enables it)
+            if zone.isFresh or showTouchedZones
+                // Draw box
+                boxColor = zone.isFresh ? supplyColor : color.new(color.red, 95)
+                zoneBox = box.new(
+                     left = zone.startBar,
+                     top = zone.top,
+                     right = bar_index + 20,
+                     bottom = zone.bottom,
+                     border_color = color.new(color.red, zone.isFresh ? 50 : 90),
+                     bgcolor = boxColor,
+                     border_width = zone.isFresh ? 1 : 1,
+                     extend = extend.right
+                 )
+                array.push(zoneBoxes, zoneBox)
+                
+                // Draw label - MINIMAL & RIGHT-ALIGNED
+                if showLabels
+                    // Clean label: "H4 Sup" or "H1 Sup 🎯"
+                    string baseLabel = zone.timeframeLabel + " Sup"
+                    string finalLabel = zone.hasLiquiditySweep ? baseLabel + " 🎯" : baseLabel
+                    
+                    zoneLabel = label.new(
+                         x = bar_index,  // RIGHT EDGE (current bar)
+                         y = zone.top,
+                         text = finalLabel,
+                         style = label.style_label_down,
+                         color = color.new(color.red, 30),
+                         textcolor = color.white,
+                         size = size.small,
+                         textalign = text.align_right
+                     )
+                    array.push(zoneLabels, zoneLabel)
+
+// ==================================================================================
+// ALERTS
+// ==================================================================================
+
+alertcondition(demandZoneDetected, title="New Demand Zone", message="New institutional DEMAND zone detected!")
+alertcondition(supplyZoneDetected, title="New Supply Zone", message="New institutional SUPPLY zone detected!")
+
+// Price entering zone alerts
+priceInDemandZone = false
+priceInSupplyZone = false
+
+if array.size(demandZones) > 0
+    for i = 0 to array.size(demandZones) - 1
+        zone = array.get(demandZones, i)
+        if zone.isFresh and low <= zone.top and high >= zone.bottom
+            priceInDemandZone := true
+            break
+
+if array.size(supplyZones) > 0
+    for i = 0 to array.size(supplyZones) - 1
+        zone = array.get(supplyZones, i)
+        if zone.isFresh and low <= zone.top and high >= zone.bottom
+            priceInSupplyZone := true
+            break
+
+alertcondition(priceInDemandZone, title="Price in Demand Zone", message="Price has entered a fresh DEMAND zone!")
+alertcondition(priceInSupplyZone, title="Price in Supply Zone", message="Price has entered a fresh SUPPLY zone!")
+
+// ==================================================================================
+// PLOTS (For debugging)
+// ==================================================================================
+
+plot(avgRange, "Avg Range", color=color.new(color.gray, 90), display=display.none)
+plotchar(isExplosiveBullish, "Explosive Bull", "▲", location.belowbar, color.green, size=size.tiny)
+plotchar(isExplosiveBearish, "Explosive Bear", "▼", location.abovebar, color.red, size=size.tiny)

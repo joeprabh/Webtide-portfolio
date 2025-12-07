@@ -1,0 +1,117 @@
+//@version=6
+indicator("Order Blocks That Work", overlay=true, max_boxes_count=50, max_labels_count=50)
+
+// SETTINGS THAT ACTUALLY SHOW ZONES
+multiplier = input.float(1.5, "Body Multiplier", minval=1.0, maxval=3.0, step=0.1,
+     tooltip="1.5 = shows zones. 2.0 = very strict")
+requireFVG = input.bool(false, "Require Fair Value Gap", 
+     tooltip="OFF = more zones. ON = strict")
+bosLookback = input.int(10, "Structure Lookback")
+deleteOnTouch = input.bool(false, "Delete When Touched",
+     tooltip="OFF = zones stay visible")
+maxZones = input.int(25, "Max Zones")
+
+type Zone
+    box b
+    label l
+    int bar
+    float top
+    float bottom
+
+var array<Zone> zones = array.new<Zone>()
+
+atr = ta.atr(14)
+
+if bar_index >= bosLookback + 2
+    // BASE PATTERN
+    redBase = close[1] < open[1]
+    greenBase = close[1] > open[1]
+    greenImpulse = close > open
+    redImpulse = close < open
+    
+    demandPattern = redBase and greenImpulse
+    supplyPattern = greenBase and redImpulse
+    
+    // BIG BODY
+    body = math.abs(close - open)
+    bigBody = body > (atr * multiplier)
+    
+    // FAIR VALUE GAP (optional)
+    demandFVG = high[2] < low
+    supplyFVG = low[2] > high
+    
+    fvgOK_demand = not requireFVG or demandFVG
+    fvgOK_supply = not requireFVG or supplyFVG
+    
+    // BREAK OF STRUCTURE
+    hh = ta.highest(high, bosLookback)
+    ll = ta.lowest(low, bosLookback)
+    breakUp = close > hh[1]
+    breakDown = close < ll[1]
+    
+    // VALID ZONES
+    validDemand = demandPattern and bigBody and fvgOK_demand and breakUp
+    validSupply = supplyPattern and bigBody and fvgOK_supply and breakDown
+    
+    // DEMAND ZONE
+    if validDemand
+        top = open[1]
+        bottom = low[1]
+        
+        b = box.new(bar_index[1], top, bar_index + 30, bottom,
+             bgcolor=color.new(color.green, 80),
+             border_color=color.green,
+             border_width=2)
+        
+        l = label.new(bar_index + 15, bottom, "DEMAND",
+             style=label.style_label_up,
+             color=color.new(color.green, 20),
+             textcolor=color.white,
+             size=size.small)
+        
+        array.push(zones, Zone.new(b, l, bar_index, top, bottom))
+    
+    // SUPPLY ZONE
+    if validSupply
+        top = high[1]
+        bottom = open[1]
+        
+        b = box.new(bar_index[1], top, bar_index + 30, bottom,
+             bgcolor=color.new(color.red, 80),
+             border_color=color.red,
+             border_width=2)
+        
+        l = label.new(bar_index + 15, top, "SUPPLY",
+             style=label.style_label_down,
+             color=color.new(color.red, 20),
+             textcolor=color.white,
+             size=size.small)
+        
+        array.push(zones, Zone.new(b, l, bar_index, top, bottom))
+
+// DELETE TOUCHED
+if deleteOnTouch and array.size(zones) > 0
+    for i = array.size(zones) - 1 to 0
+        z = array.get(zones, i)
+        if bar_index > z.bar and low <= z.top and high >= z.bottom
+            box.delete(z.b)
+            label.delete(z.l)
+            array.remove(zones, i)
+
+// LIMIT ZONES
+while array.size(zones) > maxZones
+    z = array.shift(zones)
+    box.delete(z.b)
+    label.delete(z.l)
+
+// DEBUG TABLE
+var table t = table.new(position.top_right, 2, 4, bgcolor=color.new(color.black, 80))
+if barstate.islast
+    table.cell(t, 0, 0, "Total Zones", text_color=color.white)
+    table.cell(t, 1, 0, str.tostring(array.size(zones)), text_color=color.yellow)
+    table.cell(t, 0, 1, "ATR", text_color=color.white)
+    table.cell(t, 1, 1, str.tostring(math.round(atr, 5)), text_color=color.yellow)
+    table.cell(t, 0, 2, "Multiplier", text_color=color.white)
+    table.cell(t, 1, 2, str.tostring(multiplier), text_color=color.yellow)
+    table.cell(t, 0, 3, "FVG Required", text_color=color.white)
+    table.cell(t, 1, 3, requireFVG ? "YES" : "NO", text_color=requireFVG ? color.red : color.green)

@@ -1,0 +1,77 @@
+//@version=6
+indicator("Order Block Zones", overlay=true, max_boxes_count=50)
+
+// INPUTS
+impulse = input.float(1.5, "Impulse Multiplier", minval=1.0, maxval=3.0)
+lookback = input.int(10, "Structure Lookback", minval=5, maxval=20)
+
+// ATR
+atr = ta.atr(14)
+
+// CURRENT CANDLE
+body = math.abs(close - open)
+isBull = close > open
+isBear = close < open
+
+// PREVIOUS CANDLE (BASE)
+wasRed = close[1] < open[1]
+wasGreen = close[1] > open[1]
+
+// IMPULSE: Big body candle
+bigBull = isBull and body > (atr * impulse)
+bigBear = isBear and body > (atr * impulse)
+
+// PATTERN: Red then Big Green (DEMAND)
+demandPattern = wasRed and bigBull
+
+// PATTERN: Green then Big Red (SUPPLY)
+supplyPattern = wasGreen and bigBear
+
+// STRUCTURE BREAK
+highestH = ta.highest(high, lookback)
+lowestL = ta.lowest(low, lookback)
+breakUp = close > highestH[1]
+breakDown = close < lowestL[1]
+
+// VALID ZONES
+validDemand = demandPattern and breakUp
+validSupply = supplyPattern and breakDown
+
+// STORE ZONES
+var box[] dBoxes = array.new<box>()
+var box[] sBoxes = array.new<box>()
+
+// CREATE DEMAND ZONE (on red base candle)
+if validDemand
+    top = open[1]
+    bottom = low[1]
+    b = box.new(time[1], top, time, bottom, bgcolor=color.new(color.green, 85), border_color=color.green, border_width=1, extend=extend.right, xloc=xloc.bar_time)
+    array.push(dBoxes, b)
+
+// CREATE SUPPLY ZONE (on green base candle)
+if validSupply
+    top = high[1]
+    bottom = open[1]
+    b = box.new(time[1], top, time, bottom, bgcolor=color.new(color.red, 85), border_color=color.red, border_width=1, extend=extend.right, xloc=xloc.bar_time)
+    array.push(sBoxes, b)
+
+// DELETE TOUCHED ZONES
+if array.size(dBoxes) > 0
+    for i = array.size(dBoxes) - 1 to 0
+        b = array.get(dBoxes, i)
+        if low <= box.get_top(b) and high >= box.get_bottom(b)
+            box.delete(b)
+            array.remove(dBoxes, i)
+
+if array.size(sBoxes) > 0
+    for i = array.size(sBoxes) - 1 to 0
+        b = array.get(sBoxes, i)
+        if low <= box.get_top(b) and high >= box.get_bottom(b)
+            box.delete(b)
+            array.remove(sBoxes, i)
+
+// LIMIT ZONES
+while array.size(dBoxes) > 20
+    box.delete(array.shift(dBoxes))
+while array.size(sBoxes) > 20
+    box.delete(array.shift(sBoxes))

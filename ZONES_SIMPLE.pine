@@ -1,0 +1,43 @@
+//@version=6
+indicator("Order Blocks Simple", overlay=true, max_boxes_count=100)
+
+// Start with NO rules - just show zones
+// Then you can add rules later
+
+// DEMAND: Red candle followed by Green candle
+demandSetup = bar_index >= 1 and close[1] < open[1] and close > open
+
+// SUPPLY: Green candle followed by Red candle  
+supplySetup = bar_index >= 1 and close[1] > open[1] and close < open
+
+// DRAW DEMAND ZONE (on red base candle)
+if demandSetup
+    box.new(time[1], open[1], time, low[1], 
+         bgcolor=color.new(color.green, 85), 
+         border_color=color.green, 
+         border_width=2, 
+         extend=extend.right, 
+         xloc=xloc.bar_time)
+    
+    label.new(time, low[1], "D", 
+         style=label.style_label_up, 
+         color=color.green, 
+         textcolor=color.white, 
+         size=size.small,
+         xloc=xloc.bar_time)
+
+// DRAW SUPPLY ZONE (on green base candle)
+if supplySetup
+    box.new(time[1], high[1], time, open[1], 
+         bgcolor=color.new(color.red, 85), 
+         border_color=color.red, 
+         border_width=2, 
+         extend=extend.right, 
+         xloc=xloc.bar_time)
+    
+    label.new(time, high[1], "S", 
+         style=label.style_label_down, 
+         color=color.red, 
+         textcolor=color.white, 
+         size=size.small,
+         xloc=xloc.bar_time)

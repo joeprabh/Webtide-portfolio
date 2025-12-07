@@ -1,0 +1,87 @@
+//@version=6
+indicator("Clean Order Blocks", overlay=true, max_boxes_count=20, max_labels_count=20)
+
+// ==================================================================================
+// STRICT SETTINGS FOR QUALITY ZONES ONLY
+// ==================================================================================
+
+impulseMultiplier = input.float(2.0, "Impulse: Body > ATR × ", minval=1.5, maxval=3.0)
+bosLookback = input.int(10, "Structure Lookback", minval=5, maxval=20)
+maxZones = input.int(10, "Max Zones to Show", minval=5, maxval=20)
+
+// ==================================================================================
+// STORAGE
+// ==================================================================================
+var box[] demandBoxes = array.new<box>()
+var box[] supplyBoxes = array.new<box>()
+var label[] demandLabels = array.new<label>()
+var label[] supplyLabels = array.new<label>()
+
+// ATR
+atr = ta.atr(14)
+
+// ==================================================================================
+// ZONE DETECTION - STRICT RULES
+// ==================================================================================
+if bar_index >= 1
+    // Base pattern
+    demandSetup = close[1] < open[1] and close > open
+    supplySetup = close[1] > open[1] and close < open
+    
+    // BIG impulse only (2.0x ATR = strict!)
+    body = math.abs(close - open)
+    veryBig = body > (atr * impulseMultiplier)
+    
+    // Strong structure break
+    hh = ta.highest(high, bosLookback)
+    ll = ta.lowest(low, bosLookback)
+    strongBreakUp = close > hh[1]
+    strongBreakDown = close < ll[1]
+    
+    // VALID DEMAND (strict)
+    if demandSetup and veryBig and strongBreakUp
+        b = box.new(time[1], open[1], time + (time - time[1]) * 50, low[1], 
+             bgcolor=color.new(color.green, 85), 
+             border_color=color.green, 
+             border_width=2,
+             xloc=xloc.bar_time)
+        
+        l = label.new(time + (time - time[1]) * 25, low[1], "DEMAND", 
+             style=label.style_label_up, 
+             color=color.new(color.green, 20), 
+             textcolor=color.white, 
+             size=size.normal,
+             xloc=xloc.bar_time)
+        
+        array.push(demandBoxes, b)
+        array.push(demandLabels, l)
+    
+    // VALID SUPPLY (strict)
+    if supplySetup and veryBig and strongBreakDown
+        b = box.new(time[1], high[1], time + (time - time[1]) * 50, open[1], 
+             bgcolor=color.new(color.red, 85), 
+             border_color=color.red, 
+             border_width=2,
+             xloc=xloc.bar_time)
+        
+        l = label.new(time + (time - time[1]) * 25, high[1], "SUPPLY", 
+             style=label.style_label_down, 
+             color=color.new(color.red, 20), 
+             textcolor=color.white, 
+             size=size.normal,
+             xloc=xloc.bar_time)
+        
+        array.push(supplyBoxes, b)
+        array.push(supplyLabels, l)
+
+// ==================================================================================
+// LIMIT TO RECENT ZONES ONLY
+// ==================================================================================
+// Keep only the most recent zones
+while array.size(demandBoxes) > maxZones
+    box.delete(array.shift(demandBoxes))
+    label.delete(array.shift(demandLabels))
+
+while array.size(supplyBoxes) > maxZones
+    box.delete(array.shift(supplyBoxes))
+    label.delete(array.shift(supplyLabels))

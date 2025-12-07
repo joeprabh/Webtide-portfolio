@@ -1,0 +1,144 @@
+//@version=6
+indicator("Order Blocks with Rules", overlay=true, max_boxes_count=50, max_labels_count=50)
+
+// ==================================================================================
+// INPUTS - TOGGLE EACH RULE ON/OFF
+// ==================================================================================
+useImpulseRule = input.bool(true, "✓ Rule: Big Impulse Candle", group="Rules")
+impulseSize = input.float(1.5, "  Impulse: Body > Avg Body × ", minval=1.0, maxval=3.0, group="Rules")
+
+useBOSRule = input.bool(true, "✓ Rule: Break of Structure", group="Rules")
+bosLookback = input.int(10, "  Structure Lookback", minval=5, maxval=20, group="Rules")
+
+useFVGRule = input.bool(false, "✓ Rule: Fair Value Gap", group="Rules")
+
+useDeleteRule = input.bool(true, "✓ Delete When Touched", group="Management")
+
+// ==================================================================================
+// ZONE STORAGE
+// ==================================================================================
+type Zone
+    box b
+    label l
+    float top
+    float bottom
+
+var array<Zone> zones = array.new<Zone>()
+
+// ==================================================================================
+// BASE PATTERN
+// ==================================================================================
+isRedBase = close[1] < open[1]
+isGreenBase = close[1] > open[1]
+
+isGreenImpulse = close > open
+isRedImpulse = close < open
+
+demandPattern = isRedBase and isGreenImpulse
+supplyPattern = isGreenBase and isRedImpulse
+
+// ==================================================================================
+// RULE 1: IMPULSE SIZE
+// ==================================================================================
+avgBody = ta.sma(math.abs(close - open), 20)
+currentBody = math.abs(close - open)
+
+bigEnough = currentBody > (avgBody * impulseSize)
+impulseOK = not useImpulseRule or bigEnough
+
+// ==================================================================================
+// RULE 2: BREAK OF STRUCTURE
+// ==================================================================================
+highestHigh = ta.highest(high, bosLookback)
+lowestLow = ta.lowest(low, bosLookback)
+
+breakHigh = close > highestHigh[1]
+breakLow = close < lowestLow[1]
+
+bosOK_demand = not useBOSRule or breakHigh
+bosOK_supply = not useBOSRule or breakLow
+
+// ==================================================================================
+// RULE 3: FAIR VALUE GAP
+// ==================================================================================
+hasFVG_demand = bar_index >= 2 and high[2] < low
+hasFVG_supply = bar_index >= 2 and low[2] > high
+
+fvgOK_demand = not useFVGRule or hasFVG_demand
+fvgOK_supply = not useFVGRule or hasFVG_supply
+
+// ==================================================================================
+// VALID ZONES
+// ==================================================================================
+validDemand = demandPattern and impulseOK and bosOK_demand and fvgOK_demand
+validSupply = supplyPattern and impulseOK and bosOK_supply and fvgOK_supply
+
+// ==================================================================================
+// DRAW DEMAND ZONE
+// ==================================================================================
+if validDemand and bar_index >= 1
+    float top = open[1]
+    float bottom = low[1]
+    
+    b = box.new(time[1], top, time, bottom, 
+         bgcolor=color.new(color.green, 85), 
+         border_color=color.green, 
+         border_width=2, 
+         extend=extend.right, 
+         xloc=xloc.bar_time)
+    
+    l = label.new(time, bottom, "DEMAND", 
+         style=label.style_label_up, 
+         color=color.green, 
+         textcolor=color.white, 
+         xloc=xloc.bar_time)
+    
+    z = Zone.new(b, l, top, bottom)
+    array.push(zones, z)
+
+// ==================================================================================
+// DRAW SUPPLY ZONE
+// ==================================================================================
+if validSupply and bar_index >= 1
+    float top = high[1]
+    float bottom = open[1]
+    
+    b = box.new(time[1], top, time, bottom, 
+         bgcolor=color.new(color.red, 85), 
+         border_color=color.red, 
+         border_width=2, 
+         extend=extend.right, 
+         xloc=xloc.bar_time)
+    
+    l = label.new(time, top, "SUPPLY", 
+         style=label.style_label_down, 
+         color=color.red, 
+         textcolor=color.white, 
+         xloc=xloc.bar_time)
+    
+    z = Zone.new(b, l, top, bottom)
+    array.push(zones, z)
+
+// ==================================================================================
+// DELETE TOUCHED ZONES
+// ==================================================================================
+if useDeleteRule and array.size(zones) > 0
+    for i = array.size(zones) - 1 to 0
+        z = array.get(zones, i)
+        if low <= z.top and high >= z.bottom
+            box.delete(z.b)
+            label.delete(z.l)
+            array.remove(zones, i)
+
+// ==================================================================================
+// UPDATE LABELS TO RIGHT EDGE
+// ==================================================================================
+if barstate.islast and array.size(zones) > 0
+    for z in zones
+        label.set_x(z.l, time)
+
+// LIMIT ZONES
+while array.size(zones) > 50
+    z = array.shift(zones)
+    box.delete(z.b)
+    label.delete(z.l)
