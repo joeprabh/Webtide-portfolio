@@ -1,0 +1,57 @@
+//@version=6
+indicator("Order Blocks WORKING", overlay=true, max_boxes_count=50)
+
+// Settings
+impulse = input.float(1.5, "Impulse Multiplier")
+lookback = input.int(10, "Structure Lookback")
+
+// ATR
+atr = ta.atr(14)
+
+// Detect zones
+if bar_index >= 1
+    // Base pattern
+    demandSetup = close[1] < open[1] and close > open
+    supplySetup = close[1] > open[1] and close < open
+    
+    // Big candle
+    body = math.abs(close - open)
+    isBig = body > (atr * impulse)
+    
+    // Structure break
+    hh = ta.highest(high, lookback)
+    ll = ta.lowest(low, lookback)
+    breakUp = close > hh[1]
+    breakDown = close < ll[1]
+    
+    // Valid zones
+    validDemand = demandSetup and isBig and breakUp
+    validSupply = supplySetup and isBig and breakDown
+    
+    // Draw demand
+    if validDemand
+        box.new(time[1], open[1], time, low[1], 
+             bgcolor=color.new(color.green, 85), 
+             border_color=color.green, 
+             xloc=xloc.bar_time, 
+             extend=extend.right)
+        
+        label.new(time, low[1], "D", 
+             color=color.green, 
+             textcolor=color.white, 
+             style=label.style_label_up,
+             xloc=xloc.bar_time)
+    
+    // Draw supply
+    if validSupply
+        box.new(time[1], high[1], time, open[1], 
+             bgcolor=color.new(color.red, 85), 
+             border_color=color.red, 
+             xloc=xloc.bar_time, 
+             extend=extend.right)
+        
+        label.new(time, high[1], "S", 
+             color=color.red, 
+             textcolor=color.white, 
+             style=label.style_label_down,
+             xloc=xloc.bar_time)
