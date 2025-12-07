@@ -1,0 +1,45 @@
+//@version=6
+indicator("WORKING Order Blocks", overlay=true, max_boxes_count=50)
+
+// Simple settings
+multiplier = input.float(1.2, "Body Multiplier", minval=0.8, maxval=2.0, step=0.1)
+
+if bar_index >= 10
+    // Check pattern
+    demandPattern = close[1] < open[1] and close > open
+    supplyPattern = close[1] > open[1] and close < open
+    
+    // Check size (using AVERAGE BODY not ATR)
+    avgBody = ta.sma(math.abs(close - open), 20)
+    currBody = math.abs(close - open)
+    bigEnough = currBody > (avgBody * multiplier)
+    
+    // Check structure
+    hh = ta.highest(high, 10)
+    ll = ta.lowest(low, 10)
+    breakUp = close > hh[1]
+    breakDown = close < ll[1]
+    
+    // DRAW DEMAND
+    if demandPattern and bigEnough and breakUp
+        box.new(bar_index[1], open[1], bar_index + 20, low[1], 
+             bgcolor=color.new(color.green, 85), 
+             border_color=color.green, 
+             border_width=2)
+        
+        label.new(bar_index + 10, low[1], "BUY", 
+             style=label.style_label_up, 
+             color=color.green, 
+             textcolor=color.white)
+    
+    // DRAW SUPPLY
+    if supplyPattern and bigEnough and breakDown
+        box.new(bar_index[1], high[1], bar_index + 20, open[1], 
+             bgcolor=color.new(color.red, 85), 
+             border_color=color.red, 
+             border_width=2)
+        
+        label.new(bar_index + 10, high[1], "SELL", 
+             style=label.style_label_down, 
+             color=color.red, 
+             textcolor=color.white)
