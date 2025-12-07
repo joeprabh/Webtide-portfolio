@@ -41,8 +41,8 @@ type Zone
     float  top
     float  bottom
     bool   fresh
-    string tf          // "240" or "60"
-    string side        // "supply" or "demand"
+    string tf
+    string side
     box    boxId
     label  labelId
 
@@ -54,107 +54,77 @@ var array<Zone> zones = array.new<Zone>()
 //========================================
 // HELPER FUNCTIONS
 //========================================
-getZoneColor(string tf, string side) =>
-    color baseColor = na
-    if tf == "240"
-        if side == "supply"
-            baseColor := color4HSupply
-        else
-            baseColor := color4HDemand
-    else
-        if side == "supply"
-            baseColor := color1HSupply
-        else
-            baseColor := color1HDemand
-    baseColor
+getZoneColor(string tfParam, string side) =>
+    tfParam == "240" ? (side == "supply" ? color4HSupply : color4HDemand) : (side == "supply" ? color1HSupply : color1HDemand)
 
 // Has current bar touched zone?
 isTouched(Zone z) =>
-    bool result = false
-    if touchMode == "wick"
-        result := high >= z.bottom and low <= z.top
-    else
-        bodyTop = math.max(open, close)
-        bodyBot = math.min(open, close)
-        result := bodyTop >= z.bottom and bodyBot <= z.top
-    result
+    touchMode == "wick" ? (high >= z.bottom and low <= z.top) : (math.max(open, close) >= z.bottom and math.min(open, close) <= z.top)
 
 // Build demand zone from base candle following precise box rules
 f_demandFromBase(float o, float c, float h, float l) =>
-    bodyTop   = math.max(o, c)
-    bodyBot   = math.min(o, c)
-    bodySize  = bodyTop - bodyBot
-    wickDown  = bodyBot - l
-
-    zTop    = bodyTop
-    zBottom = bodyBot - (wickDown >= bodySize * longWickRatio ? wickDown * 0.5 : wickDown)
+    float bodyTop   = math.max(o, c)
+    float bodyBot   = math.min(o, c)
+    float bodySize  = bodyTop - bodyBot
+    float wickDown  = bodyBot - l
+    float zTop      = bodyTop
+    float zBottom   = bodyBot - (wickDown >= bodySize * longWickRatio ? wickDown * 0.5 : wickDown)
     [zTop, zBottom]
 
 // Build supply zone from base candle (mirror of demand rule)
 f_supplyFromBase(float o, float c, float h, float l) =>
-    bodyTop   = math.max(o, c)
-    bodyBot   = math.min(o, c)
-    bodySize  = bodyTop - bodyBot
-    wickUp    = h - bodyTop
-
-    zBottom = bodyBot
-    zTop    = bodyTop + (wickUp >= bodySize * longWickRatio ? wickUp * 0.5 : wickUp)
+    float bodyTop   = math.max(o, c)
+    float bodyBot   = math.min(o, c)
+    float bodySize  = bodyTop - bodyBot
+    float wickUp    = h - bodyTop
+    float zBottom   = bodyBot
+    float zTop      = bodyTop + (wickUp >= bodySize * longWickRatio ? wickUp * 0.5 : wickUp)
     [zTop, zBottom]
 
 // Create new zone (box glued to base candle)
-createZone(int bornIdx, float top, float bottom, string tf, string side) =>
-    z = Zone.new()
+createZone(int bornIdx, float top, float bottom, string tfParam, string side) =>
+    Zone z = Zone.new()
     z.bornIndex := bornIdx
     z.top       := top
     z.bottom    := bottom
     z.fresh     := true
-    z.tf        := tf
+    z.tf        := tfParam
     z.side      := side
-
-    zoneColor   = getZoneColor(tf, side)
-    z.boxId     := box.new(bornIdx, top, bornIdx + extendBars, bottom,
-                        xloc = xloc.bar_index,
-                        extend = extend.right,
-                        border_color = zoneColor,
-                        bgcolor = zoneColor,
-                        border_width = 1)
-
-    labelText   = (tf == "240" ? "H4 " : "H1 ") + (side == "supply" ? "S" : "D") + " FRESH"
-    labelY      = side == "supply" ? top : bottom
-    z.labelId   := label.new(bornIdx, labelY, labelText,
-                        xloc = xloc.bar_index,
-                        style = side == "supply" ? label.style_label_down : label.style_label_up,
-                        size  = size.tiny,
-                        color = zoneColor,
-                        textcolor = color.white)
+    color zoneColor = getZoneColor(tfParam, side)
+    z.boxId     := box.new(bornIdx, top, bornIdx + extendBars, bottom, xloc = xloc.bar_index, extend = extend.right, border_color = zoneColor, bgcolor = zoneColor, border_width = 1)
+    string labelText = (tfParam == "240" ? "H4 " : "H1 ") + (side == "supply" ? "S" : "D") + " FRESH"
+    float labelY     = side == "supply" ? top : bottom
+    z.labelId   := label.new(bornIdx, labelY, labelText, xloc = xloc.bar_index, style = side == "supply" ? label.style_label_down : label.style_label_up, size = size.tiny, color = zoneColor, textcolor = color.white)
     z
 
 deleteZone(Zone z) =>
-    if not na(z.boxId)
-        box.delete(z.boxId)
-    if not na(z.labelId)
-        label.delete(z.labelId)
+    box.delete(z.boxId)
+    label.delete(z.labelId)
+    true
 
 // Find latest zone index for given tf + side
-findZoneIndex(string tf, string side) =>
+findZoneIndex(string tfParam, string side) =>
     int idx = -1
-    for i = 0 to array.size(zones) - 1
-        z = array.get(zones, i)
-        if z.tf == tf and z.side == side
-            idx := i
+    int sz = array.size(zones)
+    if sz > 0
+        for i = 0 to sz - 1
+            Zone z = array.get(zones, i)
+            if z.tf == tfParam and z.side == side
+                idx := i
     idx
 
 removeZone(int idx) =>
-    if idx >= 0 and idx < array.size(zones)
-        z = array.get(zones, idx)
+    int sz = array.size(zones)
+    if idx >= 0 and idx < sz
+        Zone z = array.get(zones, idx)
         deleteZone(z)
         array.remove(zones, idx)
+    true
 
 // Determine whether consolidation before impulse stayed tight (1-3 candles, low range)
-// baseOffset is the impulse candle index (1 for our usage)
 isTightBase(series float highs, series float lows, int baseOffset) =>
-    startIdx = baseOffset + 1
-    endIdx   = baseOffset + maxBaseBars
+    int startIdx = baseOffset + 1
+    int endIdx   = baseOffset + maxBaseBars
     float hiBase = na
     float loBase = na
     int barsCount = 0
@@ -163,33 +133,19 @@ isTightBase(series float highs, series float lows, int baseOffset) =>
             hiBase := na(hiBase) ? highs[j] : math.max(hiBase, highs[j])
             loBase := na(loBase) ? lows[j]  : math.min(loBase, lows[j])
             barsCount += 1
-    rangeImpulse = highs[baseOffset] - lows[baseOffset]
-    rangeBase    = hiBase - loBase
+    float rangeImpulse = highs[baseOffset] - lows[baseOffset]
+    float rangeBase    = hiBase - loBase
     barsCount > 0 and barsCount <= maxBaseBars and rangeBase < rangeImpulse
 
-// Liquidity sweep check: did base candle run stops relative to nearby structure?
+// Liquidity sweep check
 liquiditySweep(bool isDemand, series float highs, series float lows, int baseOffset) =>
-    lookBack = math.max(2, sweepLookback)
-    bool result = false
-    if isDemand
-        priorLow = ta.lowest(lows[baseOffset + 3], lookBack)
-        result := lows[baseOffset + 2] < priorLow
-    else
-        priorHigh = ta.highest(highs[baseOffset + 3], lookBack)
-        result := highs[baseOffset + 2] > priorHigh
-    result
+    int lookBack = math.max(2, sweepLookback)
+    isDemand ? lows[baseOffset + 2] < ta.lowest(lows[baseOffset + 3], lookBack) : highs[baseOffset + 2] > ta.highest(highs[baseOffset + 3], lookBack)
 
-// Break of structure: impulse must clear significant swing
+// Break of structure
 brokeStructure(bool isDemand, series float highs, series float lows, int baseOffset, float impHigh, float impLow) =>
-    pivotLen = math.max(2, swingLookback)
-    bool result = false
-    if isDemand
-        swingHigh = ta.highest(highs[baseOffset + 2], pivotLen)
-        result := impHigh > swingHigh
-    else
-        swingLow = ta.lowest(lows[baseOffset + 2], pivotLen)
-        result := impLow < swingLow
-    result
+    int pivotLen = math.max(2, swingLookback)
+    isDemand ? impHigh > ta.highest(highs[baseOffset + 2], pivotLen) : impLow < ta.lowest(lows[baseOffset + 2], pivotLen)
 
 //========================================
 // HTF DATA
@@ -201,110 +157,92 @@ atr4H = request.security(syminfo.tickerid, tf4H, ta.atr(14), lookahead = barmerg
 atr1H = request.security(syminfo.tickerid, tf1H, ta.atr(14), lookahead = barmerge.lookahead_off)
 
 // Detect first LTF bar of a new HTF candle
-new4H = ta.change(t4H)
-new1H = ta.change(t1H)
+new4H = ta.change(t4H) != 0
+new1H = ta.change(t1H) != 0
 
 //========================================
 // 4H IMPULSE-BASED ZONES
 //========================================
 if new4H and not na(o4H[2]) and not na(atr4H[1])
-    // impulse candle = just closed 4H bar (index 1)
-    impO = o4H[1]
-    impH = h4H[1]
-    impL = l4H[1]
-    impC = c4H[1]
+    float impO = o4H[1]
+    float impH = h4H[1]
+    float impL = l4H[1]
+    float impC = c4H[1]
+    float baseO = o4H[2]
+    float baseH = h4H[2]
+    float baseL = l4H[2]
+    float baseC = c4H[2]
+    float rng    = impH - impL
+    float atrVal = atr4H[1]
+    bool bigMove = rng >= atrVal * impulseAtrMult
+    bool upImpulse   = bigMove and impC > impO and impC > baseH
+    bool downImpulse = bigMove and impC < impO and impC < baseL
+    int baseIdx4  = bar_index
+    bool tightBase    = isTightBase(h4H, l4H, 1)
+    bool sweptLiqUp   = liquiditySweep(true, h4H, l4H, 1)
+    bool sweptLiqDown = liquiditySweep(false, h4H, l4H, 1)
+    bool bosUp        = brokeStructure(true, h4H, l4H, 1, impH, impL)
+    bool bosDown      = brokeStructure(false, h4H, l4H, 1, impH, impL)
 
-    // base candle = one bar before impulse (index 2)
-    baseO = o4H[2]
-    baseH = h4H[2]
-    baseL = l4H[2]
-    baseC = c4H[2]
+    if upImpulse and tightBase and sweptLiqUp and bosUp
+        [zTopD, zBotD] = f_demandFromBase(baseO, baseC, baseH, baseL)
+        if not na(zTopD) and zTopD - zBotD >= minZoneSize
+            if keepLatestOnly
+                int oldIdx = findZoneIndex("240", "demand")
+                if oldIdx >= 0
+                    removeZone(oldIdx)
+            array.push(zones, createZone(baseIdx4, zTopD, zBotD, "240", "demand"))
 
-    rng    = impH - impL
-    atrVal = atr4H[1]
-    bigMove = rng >= atrVal * impulseAtrMult
-
-    upImpulse   = bigMove and impC > impO and impC > baseH
-    downImpulse = bigMove and impC < impO and impC < baseL
-
-    baseTime4 = t4H[2]
-    baseIdx4  = int(ta.valuewhen(t4H == baseTime4, bar_index, 0))
-
-    // Golden checklist filters
-    tightBase    = isTightBase(h4H, l4H, 1)
-    sweptLiqUp   = liquiditySweep(true, h4H, l4H, 1)
-    sweptLiqDown = liquiditySweep(false, h4H, l4H, 1)
-    bosUp        = brokeStructure(true, h4H, l4H, 1, impH, impL)
-    bosDown      = brokeStructure(false, h4H, l4H, 1, impH, impL)
-
-    if baseIdx4 >= 0
-        if upImpulse and tightBase and sweptLiqUp and bosUp
-            [zTopD, zBotD] = f_demandFromBase(baseO, baseC, baseH, baseL)
-            if not na(zTopD) and zTopD - zBotD >= minZoneSize
-                if keepLatestOnly
-                    oldIdx = findZoneIndex("240", "demand")
-                    if oldIdx >= 0
-                        removeZone(oldIdx)
-                array.push(zones, createZone(baseIdx4, zTopD, zBotD, "240", "demand"))
-
-        if downImpulse and tightBase and sweptLiqDown and bosDown
-            [zTopS, zBotS] = f_supplyFromBase(baseO, baseC, baseH, baseL)
-            if not na(zTopS) and zTopS - zBotS >= minZoneSize
-                if keepLatestOnly
-                    oldIdx2 = findZoneIndex("240", "supply")
-                    if oldIdx2 >= 0
-                        removeZone(oldIdx2)
-                array.push(zones, createZone(baseIdx4, zTopS, zBotS, "240", "supply"))
+    if downImpulse and tightBase and sweptLiqDown and bosDown
+        [zTopS, zBotS] = f_supplyFromBase(baseO, baseC, baseH, baseL)
+        if not na(zTopS) and zTopS - zBotS >= minZoneSize
+            if keepLatestOnly
+                int oldIdx2 = findZoneIndex("240", "supply")
+                if oldIdx2 >= 0
+                    removeZone(oldIdx2)
+            array.push(zones, createZone(baseIdx4, zTopS, zBotS, "240", "supply"))
 
 //========================================
 // 1H IMPULSE-BASED ZONES
 //========================================
 if new1H and not na(o1H[2]) and not na(atr1H[1])
-    impO1 = o1H[1]
-    impH1 = h1H[1]
-    impL1 = l1H[1]
-    impC1 = c1H[1]
+    float impO1 = o1H[1]
+    float impH1 = h1H[1]
+    float impL1 = l1H[1]
+    float impC1 = c1H[1]
+    float baseO1 = o1H[2]
+    float baseH1 = h1H[2]
+    float baseL1 = l1H[2]
+    float baseC1 = c1H[2]
+    float rng1     = impH1 - impL1
+    float atrVal1  = atr1H[1]
+    bool bigMove1 = rng1 >= atrVal1 * impulseAtrMult
+    bool upImpulse1   = bigMove1 and impC1 > impO1 and impC1 > baseH1
+    bool downImpulse1 = bigMove1 and impC1 < impO1 and impC1 < baseL1
+    int baseIdx1  = bar_index
+    bool tightBase1    = isTightBase(h1H, l1H, 1)
+    bool sweptLiqUp1   = liquiditySweep(true, h1H, l1H, 1)
+    bool sweptLiqDown1 = liquiditySweep(false, h1H, l1H, 1)
+    bool bosUp1        = brokeStructure(true, h1H, l1H, 1, impH1, impL1)
+    bool bosDown1      = brokeStructure(false, h1H, l1H, 1, impH1, impL1)
 
-    baseO1 = o1H[2]
-    baseH1 = h1H[2]
-    baseL1 = l1H[2]
-    baseC1 = c1H[2]
+    if upImpulse1 and tightBase1 and sweptLiqUp1 and bosUp1
+        [zTopD1, zBotD1] = f_demandFromBase(baseO1, baseC1, baseH1, baseL1)
+        if not na(zTopD1) and zTopD1 - zBotD1 >= minZoneSize
+            if keepLatestOnly
+                int oldIdx3 = findZoneIndex("60", "demand")
+                if oldIdx3 >= 0
+                    removeZone(oldIdx3)
+            array.push(zones, createZone(baseIdx1, zTopD1, zBotD1, "60", "demand"))
 
-    rng1     = impH1 - impL1
-    atrVal1  = atr1H[1]
-    bigMove1 = rng1 >= atrVal1 * impulseAtrMult
-
-    upImpulse1   = bigMove1 and impC1 > impO1 and impC1 > baseH1
-    downImpulse1 = bigMove1 and impC1 < impO1 and impC1 < baseL1
-
-    baseTime1 = t1H[2]
-    baseIdx1  = int(ta.valuewhen(t1H == baseTime1, bar_index, 0))
-
-    // Golden checklist filters
-    tightBase1    = isTightBase(h1H, l1H, 1)
-    sweptLiqUp1   = liquiditySweep(true, h1H, l1H, 1)
-    sweptLiqDown1 = liquiditySweep(false, h1H, l1H, 1)
-    bosUp1        = brokeStructure(true, h1H, l1H, 1, impH1, impL1)
-    bosDown1      = brokeStructure(false, h1H, l1H, 1, impH1, impL1)
-
-    if baseIdx1 >= 0
-        if upImpulse1 and tightBase1 and sweptLiqUp1 and bosUp1
-            [zTopD1, zBotD1] = f_demandFromBase(baseO1, baseC1, baseH1, baseL1)
-            if not na(zTopD1) and zTopD1 - zBotD1 >= minZoneSize
-                if keepLatestOnly
-                    oldIdx3 = findZoneIndex("60", "demand")
-                    if oldIdx3 >= 0
-                        removeZone(oldIdx3)
-                array.push(zones, createZone(baseIdx1, zTopD1, zBotD1, "60", "demand"))
-
-        if downImpulse1 and tightBase1 and sweptLiqDown1 and bosDown1
-            [zTopS1, zBotS1] = f_supplyFromBase(baseO1, baseC1, baseH1, baseL1)
-            if not na(zTopS1) and zTopS1 - zBotS1 >= minZoneSize
-                if keepLatestOnly
-                    oldIdx4 = findZoneIndex("60", "supply")
-                    if oldIdx4 >= 0
-                        removeZone(oldIdx4)
-                array.push(zones, createZone(baseIdx1, zTopS1, zBotS1, "60", "supply"))
+    if downImpulse1 and tightBase1 and sweptLiqDown1 and bosDown1
+        [zTopS1, zBotS1] = f_supplyFromBase(baseO1, baseC1, baseH1, baseL1)
+        if not na(zTopS1) and zTopS1 - zBotS1 >= minZoneSize
+            if keepLatestOnly
+                int oldIdx4 = findZoneIndex("60", "supply")
+                if oldIdx4 >= 0
+                    removeZone(oldIdx4)
+            array.push(zones, createZone(baseIdx1, zTopS1, zBotS1, "60", "supply"))
 
 //========================================
 // UPDATE EXISTING ZONES (touch / expire)
@@ -313,21 +251,15 @@ int zoneCount = array.size(zones)
 if zoneCount > 0
     int i = zoneCount - 1
     while i >= 0
-        z = array.get(zones, i)
+        Zone z = array.get(zones, i)
         bool shouldRemove = false
-        
-        // Expire by age
         if expireBars > 0 and (bar_index - z.bornIndex) > expireBars
             shouldRemove := true
-
-        // Fresh -> touched (freshness rule: delete on first touch)
         if not shouldRemove and z.fresh and isTouched(z)
             shouldRemove := true
-
         if shouldRemove
             removeZone(i)
-        
-        i := i - 1
+        i -= 1
 
 //========================================
 // ALERT
