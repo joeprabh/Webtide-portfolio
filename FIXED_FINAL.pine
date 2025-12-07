@@ -1,0 +1,131 @@
+//@version=6
+indicator("Order Blocks - FIXED", overlay=true, max_boxes_count=50)
+
+// ==================================================================================
+// INPUTS
+// ==================================================================================
+useImpulse = input.bool(true, "✓ Big Impulse Rule", group="RULES")
+impulseMultiplier = input.float(2.0, "  Body > ATR × ", minval=1.0, maxval=3.0, group="RULES")
+
+useFVG = input.bool(false, "✓ Fair Value Gap", group="RULES", tooltip="Turn ON for strict filtering")
+
+useBOS = input.bool(true, "✓ Break of Structure", group="RULES")
+bosLookback = input.int(10, "  Lookback", minval=5, maxval=20, group="RULES")
+
+deleteOnTouch = input.bool(true, "Delete When Touched (later)", group="MANAGEMENT")
+
+// ==================================================================================
+// STORAGE
+// ==================================================================================
+type Zone
+    box b
+    label l
+    int createdBar
+    float top
+    float bottom
+
+var array<Zone> zones = array.new<Zone>()
+
+// ==================================================================================
+// CALCULATIONS
+// ==================================================================================
+atr = ta.atr(14)
+
+// ==================================================================================
+// ZONE DETECTION
+// ==================================================================================
+if bar_index >= 2
+    // Base pattern
+    prevRed = close[1] < open[1]
+    prevGreen = close[1] > open[1]
+    currGreen = close > open
+    currRed = close < open
+    
+    demandBase = prevRed and currGreen
+    supplyBase = prevGreen and currRed
+    
+    // Impulse check
+    currBody = math.abs(close - open)
+    bigImpulse = currBody > (atr * impulseMultiplier)
+    impulseOK = not useImpulse or bigImpulse
+    
+    // FVG check
+    demandFVG = high[2] < low
+    supplyFVG = low[2] > high
+    fvgOK_d = not useFVG or demandFVG
+    fvgOK_s = not useFVG or supplyFVG
+    
+    // BOS check
+    highestHigh = ta.highest(high, bosLookback)
+    lowestLow = ta.lowest(low, bosLookback)
+    breakHigh = close > highestHigh[1]
+    breakLow = close < lowestLow[1]
+    bosOK_d = not useBOS or breakHigh
+    bosOK_s = not useBOS or breakLow
+    
+    // Valid zones
+    validDemand = demandBase and impulseOK and fvgOK_d and bosOK_d
+    validSupply = supplyBase and impulseOK and fvgOK_s and bosOK_s
+    
+    // DRAW DEMAND
+    if validDemand
+        b = box.new(time[1], open[1], time, low[1], 
+             bgcolor=color.new(color.green, 85), 
+             border_color=color.green, 
+             border_width=2, 
+             extend=extend.right, 
+             xloc=xloc.bar_time)
+        
+        l = label.new(time, low[1], "DEMAND", 
+             style=label.style_label_up, 
+             color=color.new(color.green, 20), 
+             textcolor=color.white, 
+             xloc=xloc.bar_time)
+        
+        // Store with creation bar
+        array.push(zones, Zone.new(b, l, bar_index, open[1], low[1]))
+    
+    // DRAW SUPPLY
+    if validSupply
+        b = box.new(time[1], high[1], time, open[1], 
+             bgcolor=color.new(color.red, 85), 
+             border_color=color.red, 
+             border_width=2, 
+             extend=extend.right, 
+             xloc=xloc.bar_time)
+        
+        l = label.new(time, high[1], "SUPPLY", 
+             style=label.style_label_down, 
+             color=color.new(color.red, 20), 
+             textcolor=color.white, 
+             xloc=xloc.bar_time)
+        
+        // Store with creation bar
+        array.push(zones, Zone.new(b, l, bar_index, high[1], open[1]))
+
+// ==================================================================================
+// DELETE ONLY ZONES CREATED IN THE PAST (NOT CURRENT BAR)
+// ==================================================================================
+if deleteOnTouch and array.size(zones) > 0
+    for i = array.size(zones) - 1 to 0
+        z = array.get(zones, i)
+        
+        // Only delete if zone was created BEFORE current bar
+        if bar_index > z.createdBar
+            if low <= z.top and high >= z.bottom
+                box.delete(z.b)
+                label.delete(z.l)
+                array.remove(zones, i)
+
+// ==================================================================================
+// UPDATE LABELS
+// ==================================================================================
+if barstate.islast and array.size(zones) > 0
+    for z in zones
+        label.set_x(z.l, time)
+
+// LIMIT
+while array.size(zones) > 50
+    z = array.shift(zones)
+    box.delete(z.b)
+    label.delete(z.l)
