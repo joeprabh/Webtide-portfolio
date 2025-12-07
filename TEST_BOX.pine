@@ -1,0 +1,16 @@
+//@version=6
+indicator("TEST - One Box", overlay=true)
+
+// Draw ONE box at current bar
+if barstate.islast
+    box.new(time - (time - time[1]) * 20, high, time, low, 
+         bgcolor=color.new(color.blue, 80), 
+         border_color=color.blue, 
+         border_width=3,
+         xloc=xloc.bar_time)
+    
+    label.new(time, high, "TEST BOX", 
+         color=color.blue, 
+         textcolor=color.white, 
+         size=size.large,
+         xloc=xloc.bar_time)
