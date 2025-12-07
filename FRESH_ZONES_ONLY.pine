@@ -1,0 +1,100 @@
+//@version=6
+indicator("Fresh Zones Only", overlay=true, max_boxes_count=50, max_labels_count=50)
+
+// Settings
+multiplier = input.float(1.5, "Body Multiplier", minval=1.0, maxval=2.5)
+lookback = input.int(10, "Structure Lookback")
+maxZones = input.int(20, "Max Zones")
+
+type Zone
+    box b
+    label l
+    int createdBar
+    float top
+    float bottom
+    bool isDemand
+
+var array<Zone> zones = array.new<Zone>()
+
+atr = ta.atr(14)
+
+// CREATE NEW ZONES
+if bar_index >= lookback + 2
+    // Pattern
+    demandBase = close[1] < open[1] and close > open
+    supplyBase = close[1] > open[1] and close < open
+    
+    // Size
+    body = math.abs(close - open)
+    bigBody = body > atr * multiplier
+    
+    // Structure
+    hh = ta.highest(high, lookback)
+    ll = ta.lowest(low, lookback)
+    breakUp = close > hh[1]
+    breakDown = close < ll[1]
+    
+    // DEMAND
+    if demandBase and bigBody and breakUp
+        top = open[1]
+        bottom = low[1]
+        
+        b = box.new(bar_index[1], top, bar_index + 50, bottom,
+             bgcolor=color.new(color.green, 85),
+             border_color=color.green,
+             border_width=2)
+        
+        l = label.new(bar_index + 25, bottom, "DEMAND",
+             style=label.style_label_up,
+             color=color.green,
+             textcolor=color.white,
+             size=size.tiny)
+        
+        array.push(zones, Zone.new(b, l, bar_index[1], top, bottom, true))
+    
+    // SUPPLY
+    if supplyBase and bigBody and breakDown
+        top = high[1]
+        bottom = open[1]
+        
+        b = box.new(bar_index[1], top, bar_index + 50, bottom,
+             bgcolor=color.new(color.red, 85),
+             border_color=color.red,
+             border_width=2)
+        
+        l = label.new(bar_index + 25, top, "SUPPLY",
+             style=label.style_label_down,
+             color=color.red,
+             textcolor=color.white,
+             size=size.tiny)
+        
+        array.push(zones, Zone.new(b, l, bar_index[1], top, bottom, false))
+
+// DELETE TOUCHED ZONES (check current bar against all zones)
+if array.size(zones) > 0
+    for i = array.size(zones) - 1 to 0
+        z = array.get(zones, i)
+        
+        // Only check zones created BEFORE current bar
+        if bar_index > z.createdBar
+            // Check if current bar touched the zone
+            touched = low <= z.top and high >= z.bottom
+            
+            if touched
+                box.delete(z.b)
+                label.delete(z.l)
+                array.remove(zones, i)
+
+// LIMIT TOTAL ZONES
+while array.size(zones) > maxZones
+    z = array.shift(zones)
+    box.delete(z.b)
+    label.delete(z.l)
+
+// DEBUG
+var table t = table.new(position.top_right, 2, 2)
+if barstate.islast
+    table.cell(t, 0, 0, "FRESH Zones", bgcolor=color.black, text_color=color.white)
+    table.cell(t, 1, 0, str.tostring(array.size(zones)), bgcolor=color.black, text_color=color.yellow)
+    table.cell(t, 0, 1, "Multiplier", bgcolor=color.black, text_color=color.white)
+    table.cell(t, 1, 1, str.tostring(multiplier), bgcolor=color.black, text_color=color.yellow)
