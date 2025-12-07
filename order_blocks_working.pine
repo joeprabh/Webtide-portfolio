@@ -1,0 +1,75 @@
+//@version=6
+indicator("Order Blocks", overlay=true, max_boxes_count=50)
+
+// INPUTS
+impulseMultiplier = input.float(1.5, "Impulse Multiplier", minval=1.0, maxval=3.0)
+pivotLookback = input.int(10, "Pivot Lookback", minval=5, maxval=20)
+
+// ATR
+atr = ta.atr(14)
+
+// RULE 1: Extended Range Candle
+body = math.abs(close - open)
+isExplosiveBull = close > open and body > (atr * impulseMultiplier)
+isExplosiveBear = close < open and body > (atr * impulseMultiplier)
+
+// BASE CANDLE: Red followed by explosive Green (DEMAND)
+isDemandBase = close[1] < open[1] and isExplosiveBull
+
+// BASE CANDLE: Green followed by explosive Red (SUPPLY)
+isSupplyBase = close[1] > open[1] and isExplosiveBear
+
+// RULE 2: FVG (Fair Value Gap)
+hasDemandFVG = bar_index >= 2 and high[2] < low
+hasSupplyFVG = bar_index >= 2 and low[2] > high
+
+// RULE 3: Break of Structure
+highestHigh = ta.highest(high, pivotLookback)
+lowestLow = ta.lowest(low, pivotLookback)
+demandBOS = close > highestHigh[1]
+supplyBOS = close < lowestLow[1]
+
+// VALID ORDER BLOCKS (All 3 rules)
+validDemand = isDemandBase and hasDemandFVG and demandBOS
+validSupply = isSupplyBase and hasSupplyFVG and supplyBOS
+
+// DRAW ZONES
+var box[] demandBoxes = array.new<box>()
+var box[] supplyBoxes = array.new<box>()
+
+if validDemand
+    // DEMAND ZONE on RED base candle [1]
+    top = math.max(close[1], open[1])
+    bottom = low[1]
+    b = box.new(time[1], top, time, bottom, bgcolor=color.new(color.green, 80), border_color=color.green, border_width=2, extend=extend.right, xloc=xloc.bar_time)
+    array.push(demandBoxes, b)
+
+if validSupply
+    // SUPPLY ZONE on GREEN base candle [1]
+    top = high[1]
+    bottom = math.min(close[1], open[1])
+    b = box.new(time[1], top, time, bottom, bgcolor=color.new(color.red, 80), border_color=color.red, border_width=2, extend=extend.right, xloc=xloc.bar_time)
+    array.push(supplyBoxes, b)
+
+// DELETE touched zones
+if array.size(demandBoxes) > 0
+    for i = array.size(demandBoxes) - 1 to 0
+        b = array.get(demandBoxes, i)
+        boxBottom = box.get_bottom(b)
+        boxTop = box.get_top(b)
+        if low <= boxTop and high >= boxBottom
+            box.delete(b)
+            array.remove(demandBoxes, i)
+
+if array.size(supplyBoxes) > 0
+    for i = array.size(supplyBoxes) - 1 to 0
+        b = array.get(supplyBoxes, i)
+        boxBottom = box.get_bottom(b)
+        boxTop = box.get_top(b)
+        if low <= boxTop and high >= boxBottom
+            box.delete(b)
+            array.remove(supplyBoxes, i)
+
+// SHOW when zones created
+plotshape(validDemand, "Demand", shape.labelup, location.belowbar, color.green, text="DEMAND OB")
+plotshape(validSupply, "Supply", shape.labeldown, location.abovebar, color.red, text="SUPPLY OB")
