@@ -60,7 +60,7 @@ atr = ta.atr(atrPeriod)
 isBull = close > open
 isBear = close < open
 body = math.abs(close - open)
-range = high - low
+candleRange = high - low
 
 // Previous candle
 isBull1 = bar_index >= 1 ? close[1] > open[1] : false
@@ -70,8 +70,8 @@ isBear1 = bar_index >= 1 ? close[1] < open[1] : false
 // RULE 1: EXTENDED RANGE CANDLE (IMPULSE)
 // ==================================================================================
 
-isExplosiveBull = isBull and body > (atr * impulseMultiplier) and body > (range * 0.5)
-isExplosiveBear = isBear and body > (atr * impulseMultiplier) and body > (range * 0.5)
+isExplosiveBull = isBull and body > (atr * impulseMultiplier) and body > (candleRange * 0.5)
+isExplosiveBear = isBear and body > (atr * impulseMultiplier) and body > (candleRange * 0.5)
 
 // ==================================================================================
 // BASE CANDLE DETECTION
