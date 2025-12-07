@@ -98,7 +98,7 @@ if validDemand and bar_index >= 1
          extend=extend.right, 
          xloc=xloc.bar_time)
     
-    l = na(label)
+    label l = na
     if showLabels
         l := label.new(time, zoneBottom, "DEMAND", 
              style=label.style_label_up, 
@@ -125,7 +125,7 @@ if validSupply and bar_index >= 1
          extend=extend.right, 
          xloc=xloc.bar_time)
     
-    l = na(label)
+    label l = na
     if showLabels
         l := label.new(time, zoneTop, "SUPPLY", 
              style=label.style_label_down, 
