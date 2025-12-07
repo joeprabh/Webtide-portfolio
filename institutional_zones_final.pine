@@ -1,0 +1,194 @@
+//@version=6
+indicator("Institutional Supply & Demand", overlay=true, max_boxes_count=100, max_labels_count=100)
+
+// ==================================================================================
+// INPUTS
+// ==================================================================================
+impulseMultiplier = input.float(2.0, "Impulse Multiplier (Body > X * ATR)", minval=1.0, maxval=5.0)
+swingLookback = input.int(10, "Swing High/Low Lookback", minval=5, maxval=50)
+maxZoneAgeDays = input.int(30, "Max Zone Age (Days)", minval=1, maxval=365)
+showLabels = input.bool(true, "Show Labels")
+
+demandColor = input.color(color.new(color.green, 70), "Demand Color")
+supplyColor = input.color(color.new(color.red, 70), "Supply Color")
+
+// ==================================================================================
+// ZONE TYPE
+// ==================================================================================
+type Zone
+    box b
+    label l
+    int barIndex
+    float top
+    float bottom
+
+var array<Zone> zones = array.new<Zone>()
+
+// ==================================================================================
+// CALCULATIONS
+// ==================================================================================
+atr = ta.atr(14)
+
+// ==================================================================================
+// RULE 1: THE BASE
+// ==================================================================================
+// Base candle is candle[1], Impulse is candle[0]
+isRedBase = close[1] < open[1]      // Bearish base candle
+isGreenBase = close[1] > open[1]    // Bullish base candle
+
+// ==================================================================================
+// RULE 2: THE IMPULSE (Extended Range Candle)
+// ==================================================================================
+// Current candle [0] is the impulse
+currentBody = math.abs(close - open)
+isBullishImpulse = close > open
+isBearishImpulse = close < open
+
+// Extended Range Candle: Body > 2.0x ATR
+isExplosiveBull = isBullishImpulse and currentBody > (atr * impulseMultiplier)
+isExplosiveBear = isBearishImpulse and currentBody > (atr * impulseMultiplier)
+
+// ==================================================================================
+// RULE 3: THE IMBALANCE (FVG - Fair Value Gap)
+// ==================================================================================
+// The candle AFTER the impulse (candle [0]) should not fill back to base
+// This means we check if there's a gap between base candle and the candle after impulse
+
+// For DEMAND: Check if high of candle[2] (before base) < low of current candle[0] (impulse)
+// Actually, the FVG is: high[2] < low[0] means there's a gap
+demandFVG = bar_index >= 2 and high[2] < low
+
+// For SUPPLY: Check if low of candle[2] (before base) > high of current candle[0] (impulse)
+supplyFVG = bar_index >= 2 and low[2] > high
+
+// ==================================================================================
+// RULE 4: THE ACCOMPLISHMENT (Break of Structure)
+// ==================================================================================
+// Find highest high and lowest low in lookback period
+highestHigh = ta.highest(high, swingLookback)
+lowestLow = ta.lowest(low, swingLookback)
+
+// For DEMAND: Current close must break above the highest high
+demandBOS = close > highestHigh[1]
+
+// For SUPPLY: Current close must break below the lowest low
+supplyBOS = close < lowestLow[1]
+
+// ==================================================================================
+// VALID ZONES (ALL 4 RULES MUST PASS)
+// ==================================================================================
+validDemand = isRedBase and isExplosiveBull and demandFVG and demandBOS
+validSupply = isGreenBase and isExplosiveBear and supplyFVG and supplyBOS
+
+// ==================================================================================
+// DRAW ZONES (On the BASE candle)
+// ==================================================================================
+if validDemand and bar_index >= 1
+    // DEMAND ZONE: Draw on RED base candle [1]
+    // TOP = Body High of red candle (the OPEN price since close < open)
+    // BOTTOM = Wick Low
+    float zoneTop = open[1]           // Body high of red candle
+    float zoneBottom = low[1]         // Wick low
+    
+    // Draw rectangle starting from base candle opening time
+    b = box.new(time[1], zoneTop, time, zoneBottom, 
+         border_color=color.green, 
+         bgcolor=demandColor, 
+         border_width=2, 
+         extend=extend.right, 
+         xloc=xloc.bar_time)
+    
+    l = na(label)
+    if showLabels
+        l := label.new(time, zoneBottom, "DEMAND", 
+             style=label.style_label_up, 
+             color=color.green, 
+             textcolor=color.white, 
+             size=size.normal,
+             xloc=xloc.bar_time)
+    
+    z = Zone.new(b, l, bar_index - 1, zoneTop, zoneBottom)
+    array.push(zones, z)
+
+if validSupply and bar_index >= 1
+    // SUPPLY ZONE: Draw on GREEN base candle [1]
+    // TOP = Wick High
+    // BOTTOM = Body Low of green candle (the OPEN price since close > open)
+    float zoneTop = high[1]           // Wick high
+    float zoneBottom = open[1]        // Body low of green candle
+    
+    // Draw rectangle starting from base candle opening time
+    b = box.new(time[1], zoneTop, time, zoneBottom, 
+         border_color=color.red, 
+         bgcolor=supplyColor, 
+         border_width=2, 
+         extend=extend.right, 
+         xloc=xloc.bar_time)
+    
+    l = na(label)
+    if showLabels
+        l := label.new(time, zoneTop, "SUPPLY", 
+             style=label.style_label_down, 
+             color=color.red, 
+             textcolor=color.white, 
+             size=size.normal,
+             xloc=xloc.bar_time)
+    
+    z = Zone.new(b, l, bar_index - 1, zoneTop, zoneBottom)
+    array.push(zones, z)
+
+// ==================================================================================
+// MANAGEMENT: INSTANT DELETION ON TOUCH
+// ==================================================================================
+if array.size(zones) > 0
+    for i = array.size(zones) - 1 to 0
+        z = array.get(zones, i)
+        
+        // Check if price touched the zone
+        if low <= z.top and high >= z.bottom
+            // DELETE immediately
+            box.delete(z.b)
+            if not na(z.l)
+                label.delete(z.l)
+            array.remove(zones, i)
+
+// ==================================================================================
+// MANAGEMENT: DELETE OLD ZONES (30 DAYS)
+// ==================================================================================
+int barsPerDay = timeframe.in_seconds() > 0 ? math.floor(86400 / timeframe.in_seconds()) : 24
+int maxAgeBars = maxZoneAgeDays * barsPerDay
+
+if array.size(zones) > 0
+    for i = array.size(zones) - 1 to 0
+        z = array.get(zones, i)
+        int zoneAge = bar_index - z.barIndex
+        
+        if zoneAge > maxAgeBars
+            box.delete(z.b)
+            if not na(z.l)
+                label.delete(z.l)
+            array.remove(zones, i)
+
+// ==================================================================================
+// UPDATE LABEL POSITIONS (Keep at right edge)
+// ==================================================================================
+if barstate.islast and array.size(zones) > 0
+    for i = 0 to array.size(zones) - 1
+        z = array.get(zones, i)
+        if not na(z.l)
+            label.set_x(z.l, time)
+
+// ==================================================================================
+// ALERTS
+// ==================================================================================
+alertcondition(validDemand, "Demand Zone", "New DEMAND zone created")
+alertcondition(validSupply, "Supply Zone", "New SUPPLY zone created")
+
+// ==================================================================================
+// VISUAL CONFIRMATION (Show when zones created)
+// ==================================================================================
+plotshape(validDemand, "Demand Created", shape.labelup, location.belowbar, color.green, text="DEMAND", size=size.small)
+plotshape(validSupply, "Supply Created", shape.labeldown, location.abovebar, color.red, text="SUPPLY", size=size.small)
+
+// Show ATR for reference
+plot(atr, "ATR", color=color.new(color.gray, 90), display=display.none)
