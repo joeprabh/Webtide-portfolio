@@ -1,0 +1,63 @@
+//@version=6
+indicator("DEBUG - See What's Happening", overlay=true, max_boxes_count=200)
+
+// Count zones as they're created
+var int demandCount = 0
+var int supplyCount = 0
+
+// DEMAND: Red then Green
+if bar_index >= 1
+    wasRed = close[1] < open[1]
+    isGreen = close > open
+    
+    if wasRed and isGreen
+        demandCount += 1
+        
+        // Draw zone
+        box.new(time[1], open[1], time, low[1], 
+             bgcolor=color.new(color.green, 85), 
+             border_color=color.green, 
+             border_width=2, 
+             extend=extend.right, 
+             xloc=xloc.bar_time)
+        
+        label.new(time, low[1], str.tostring(demandCount), 
+             style=label.style_label_up, 
+             color=color.green, 
+             textcolor=color.white, 
+             xloc=xloc.bar_time)
+
+// SUPPLY: Green then Red
+if bar_index >= 1
+    wasGreen = close[1] > open[1]
+    isRed = close < open
+    
+    if wasGreen and isRed
+        supplyCount += 1
+        
+        // Draw zone
+        box.new(time[1], high[1], time, open[1], 
+             bgcolor=color.new(color.red, 85), 
+             border_color=color.red, 
+             border_width=2, 
+             extend=extend.right, 
+             xloc=xloc.bar_time)
+        
+        label.new(time, high[1], str.tostring(supplyCount), 
+             style=label.style_label_down, 
+             color=color.red, 
+             textcolor=color.white, 
+             xloc=xloc.bar_time)
+
+// Show count in table
+var table infoTable = table.new(position.top_right, 2, 3, border_width=2)
+
+if barstate.islast
+    table.cell(infoTable, 0, 0, "Type", bgcolor=color.gray, text_color=color.white)
+    table.cell(infoTable, 1, 0, "Count", bgcolor=color.gray, text_color=color.white)
+    
+    table.cell(infoTable, 0, 1, "DEMAND", text_color=color.green)
+    table.cell(infoTable, 1, 1, str.tostring(demandCount), text_color=color.lime, text_size=size.large)
+    
+    table.cell(infoTable, 0, 2, "SUPPLY", text_color=color.red)
+    table.cell(infoTable, 1, 2, str.tostring(supplyCount), text_color=color.orange, text_size=size.large)
