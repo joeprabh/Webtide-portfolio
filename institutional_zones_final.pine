@@ -184,11 +184,4 @@ if barstate.islast and array.size(zones) > 0
 alertcondition(validDemand, "Demand Zone", "New DEMAND zone created")
 alertcondition(validSupply, "Supply Zone", "New SUPPLY zone created")
 
-// ==================================================================================
-// VISUAL CONFIRMATION (Show when zones created)
-// ==================================================================================
-plotshape(validDemand, "Demand Created", shape.labelup, location.belowbar, color.green, text="DEMAND", size=size.small)
-plotshape(validSupply, "Supply Created", shape.labeldown, location.abovebar, color.red, text="SUPPLY", size=size.small)
-
-// Show ATR for reference
-plot(atr, "ATR", color=color.new(color.gray, 90), display=display.none)
+// No plots - only boxes overlay on candles
