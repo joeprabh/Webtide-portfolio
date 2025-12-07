@@ -163,28 +163,30 @@ new1H = ta.change(t1H) != 0
 //========================================
 // 4H IMPULSE-BASED ZONES
 //========================================
+// Call functions outside conditional for consistency
+float impH_4H = h4H[1]
+float impL_4H = l4H[1]
+bool tightBase4H = isTightBase(h4H, l4H, 1)
+bool sweptLiqUp4H = liquiditySweep(true, h4H, l4H, 1)
+bool sweptLiqDown4H = liquiditySweep(false, h4H, l4H, 1)
+bool bosUp4H = brokeStructure(true, h4H, l4H, 1, impH_4H, impL_4H)
+bool bosDown4H = brokeStructure(false, h4H, l4H, 1, impH_4H, impL_4H)
+
 if new4H and not na(o4H[2]) and not na(atr4H[1])
     float impO = o4H[1]
-    float impH = h4H[1]
-    float impL = l4H[1]
     float impC = c4H[1]
     float baseO = o4H[2]
     float baseH = h4H[2]
     float baseL = l4H[2]
     float baseC = c4H[2]
-    float rng    = impH - impL
+    float rng = impH_4H - impL_4H
     float atrVal = atr4H[1]
     bool bigMove = rng >= atrVal * impulseAtrMult
-    bool upImpulse   = bigMove and impC > impO and impC > baseH
+    bool upImpulse = bigMove and impC > impO and impC > baseH
     bool downImpulse = bigMove and impC < impO and impC < baseL
-    int baseIdx4  = bar_index
-    bool tightBase    = isTightBase(h4H, l4H, 1)
-    bool sweptLiqUp   = liquiditySweep(true, h4H, l4H, 1)
-    bool sweptLiqDown = liquiditySweep(false, h4H, l4H, 1)
-    bool bosUp        = brokeStructure(true, h4H, l4H, 1, impH, impL)
-    bool bosDown      = brokeStructure(false, h4H, l4H, 1, impH, impL)
+    int baseIdx4 = bar_index
 
-    if upImpulse and tightBase and sweptLiqUp and bosUp
+    if upImpulse and tightBase4H and sweptLiqUp4H and bosUp4H
         [zTopD, zBotD] = f_demandFromBase(baseO, baseC, baseH, baseL)
         if not na(zTopD) and zTopD - zBotD >= minZoneSize
             if keepLatestOnly
@@ -193,7 +195,7 @@ if new4H and not na(o4H[2]) and not na(atr4H[1])
                     removeZone(oldIdx)
             array.push(zones, createZone(baseIdx4, zTopD, zBotD, "240", "demand"))
 
-    if downImpulse and tightBase and sweptLiqDown and bosDown
+    if downImpulse and tightBase4H and sweptLiqDown4H and bosDown4H
         [zTopS, zBotS] = f_supplyFromBase(baseO, baseC, baseH, baseL)
         if not na(zTopS) and zTopS - zBotS >= minZoneSize
             if keepLatestOnly
@@ -205,28 +207,30 @@ if new4H and not na(o4H[2]) and not na(atr4H[1])
 //========================================
 // 1H IMPULSE-BASED ZONES
 //========================================
+// Call functions outside conditional for consistency
+float impH_1H = h1H[1]
+float impL_1H = l1H[1]
+bool tightBase1H = isTightBase(h1H, l1H, 1)
+bool sweptLiqUp1H = liquiditySweep(true, h1H, l1H, 1)
+bool sweptLiqDown1H = liquiditySweep(false, h1H, l1H, 1)
+bool bosUp1H = brokeStructure(true, h1H, l1H, 1, impH_1H, impL_1H)
+bool bosDown1H = brokeStructure(false, h1H, l1H, 1, impH_1H, impL_1H)
+
 if new1H and not na(o1H[2]) and not na(atr1H[1])
     float impO1 = o1H[1]
-    float impH1 = h1H[1]
-    float impL1 = l1H[1]
     float impC1 = c1H[1]
     float baseO1 = o1H[2]
     float baseH1 = h1H[2]
     float baseL1 = l1H[2]
     float baseC1 = c1H[2]
-    float rng1     = impH1 - impL1
-    float atrVal1  = atr1H[1]
+    float rng1 = impH_1H - impL_1H
+    float atrVal1 = atr1H[1]
     bool bigMove1 = rng1 >= atrVal1 * impulseAtrMult
-    bool upImpulse1   = bigMove1 and impC1 > impO1 and impC1 > baseH1
+    bool upImpulse1 = bigMove1 and impC1 > impO1 and impC1 > baseH1
     bool downImpulse1 = bigMove1 and impC1 < impO1 and impC1 < baseL1
-    int baseIdx1  = bar_index
-    bool tightBase1    = isTightBase(h1H, l1H, 1)
-    bool sweptLiqUp1   = liquiditySweep(true, h1H, l1H, 1)
-    bool sweptLiqDown1 = liquiditySweep(false, h1H, l1H, 1)
-    bool bosUp1        = brokeStructure(true, h1H, l1H, 1, impH1, impL1)
-    bool bosDown1      = brokeStructure(false, h1H, l1H, 1, impH1, impL1)
+    int baseIdx1 = bar_index
 
-    if upImpulse1 and tightBase1 and sweptLiqUp1 and bosUp1
+    if upImpulse1 and tightBase1H and sweptLiqUp1H and bosUp1H
         [zTopD1, zBotD1] = f_demandFromBase(baseO1, baseC1, baseH1, baseL1)
         if not na(zTopD1) and zTopD1 - zBotD1 >= minZoneSize
             if keepLatestOnly
@@ -235,7 +239,7 @@ if new1H and not na(o1H[2]) and not na(atr1H[1])
                     removeZone(oldIdx3)
             array.push(zones, createZone(baseIdx1, zTopD1, zBotD1, "60", "demand"))
 
-    if downImpulse1 and tightBase1 and sweptLiqDown1 and bosDown1
+    if downImpulse1 and tightBase1H and sweptLiqDown1H and bosDown1H
         [zTopS1, zBotS1] = f_supplyFromBase(baseO1, baseC1, baseH1, baseL1)
         if not na(zTopS1) and zTopS1 - zBotS1 >= minZoneSize
             if keepLatestOnly
