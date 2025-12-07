@@ -1,0 +1,197 @@
+//@version=6
+indicator("Institutional Order Blocks - Final Version", overlay=true, max_boxes_count=50, max_labels_count=50)
+
+// ==================================================================================
+// ALL 4 RULES - INSTITUTIONAL ORDER BLOCKS
+// ==================================================================================
+// RULE 1: Base Pattern (Red→Green for Demand, Green→Red for Supply)
+// RULE 2: Explosive Impulse (Body > ATR × Multiplier)
+// RULE 3: Fair Value Gap (Optional - can be turned OFF)
+// RULE 4: Break of Structure (BOS over lookback period)
+// ==================================================================================
+
+// INPUTS
+impulseMultiplier = input.float(1.5, "Body Multiplier (Rule 2)", 
+     minval=1.0, maxval=2.5, step=0.1,
+     group="Core Rules",
+     tooltip="1.5 = Balanced | 2.0 = Very Strict | Lower for more zones")
+
+requireFVG = input.bool(false, "Require Fair Value Gap (Rule 3)", 
+     group="Core Rules",
+     tooltip="OFF = More zones | ON = Stricter (all 4 rules)")
+
+bosLookback = input.int(10, "BOS Lookback Period (Rule 4)", 
+     minval=5, maxval=20,
+     group="Core Rules")
+
+maxZones = input.int(20, "Maximum Zones Displayed", 
+     minval=5, maxval=50,
+     group="Display")
+
+showLabels = input.bool(true, "Show Labels", group="Display")
+
+// Colors
+demandColor = input.color(color.green, "Demand Color", group="Display")
+supplyColor = input.color(color.red, "Supply Color", group="Display")
+
+// ==================================================================================
+// ZONE TYPE
+// ==================================================================================
+type OrderBlock
+    box zoneBox
+    label zoneLabel = na
+    int createdBar
+    float topPrice
+    float bottomPrice
+
+var array<OrderBlock> orderBlocks = array.new<OrderBlock>()
+
+// ==================================================================================
+// CALCULATIONS
+// ==================================================================================
+atr14 = ta.atr(14)
+minBodySize = atr14 * impulseMultiplier
+
+// ==================================================================================
+// DETECT ORDER BLOCKS
+// ==================================================================================
+if bar_index >= bosLookback + 2
+    
+    // RULE 1: BASE PATTERN
+    isRedCandle_prev = close[1] < open[1]
+    isGreenCandle_prev = close[1] > open[1]
+    isGreenCandle_curr = close > open
+    isRedCandle_curr = close < open
+    
+    demandBasePattern = isRedCandle_prev and isGreenCandle_curr
+    supplyBasePattern = isGreenCandle_prev and isRedCandle_curr
+    
+    // RULE 2: EXPLOSIVE IMPULSE
+    currentBody = math.abs(close - open)
+    isExplosiveMove = currentBody > minBodySize
+    
+    // RULE 3: FAIR VALUE GAP (OPTIONAL)
+    demandFVG = high[2] < low
+    supplyFVG = low[2] > high
+    
+    fvgPass_demand = not requireFVG or demandFVG
+    fvgPass_supply = not requireFVG or supplyFVG
+    
+    // RULE 4: BREAK OF STRUCTURE
+    highestHigh = ta.highest(high, bosLookback)
+    lowestLow = ta.lowest(low, bosLookback)
+    
+    breakStructure_bullish = close > highestHigh[1]
+    breakStructure_bearish = close < lowestLow[1]
+    
+    // ALL RULES COMBINED
+    validDemandBlock = demandBasePattern and isExplosiveMove and fvgPass_demand and breakStructure_bullish
+    validSupplyBlock = supplyBasePattern and isExplosiveMove and fvgPass_supply and breakStructure_bearish
+    
+    // CREATE DEMAND ORDER BLOCK
+    if validDemandBlock
+        // Zone on RED base candle [1]
+        zoneTop = open[1]
+        zoneBottom = low[1]
+        
+        boxObj = box.new(bar_index[1], zoneTop, bar_index + 60, zoneBottom,
+             bgcolor=color.new(demandColor, 85),
+             border_color=demandColor,
+             border_width=2)
+        
+        labelObj = na
+        if showLabels
+            labelObj := label.new(bar_index[1] + 30, zoneBottom, "DEMAND",
+                 style=label.style_label_up,
+                 color=color.new(demandColor, 20),
+                 textcolor=color.white,
+                 size=size.small)
+        
+        array.push(orderBlocks, OrderBlock.new(boxObj, labelObj, bar_index[1], zoneTop, zoneBottom))
+    
+    // CREATE SUPPLY ORDER BLOCK
+    if validSupplyBlock
+        // Zone on GREEN base candle [1]
+        zoneTop = high[1]
+        zoneBottom = open[1]
+        
+        boxObj = box.new(bar_index[1], zoneTop, bar_index + 60, zoneBottom,
+             bgcolor=color.new(supplyColor, 85),
+             border_color=supplyColor,
+             border_width=2)
+        
+        labelObj = na
+        if showLabels
+            labelObj := label.new(bar_index[1] + 30, zoneTop, "SUPPLY",
+                 style=label.style_label_down,
+                 color=color.new(supplyColor, 20),
+                 textcolor=color.white,
+                 size=size.small)
+        
+        array.push(orderBlocks, OrderBlock.new(boxObj, labelObj, bar_index[1], zoneTop, zoneBottom))
+
+// ==================================================================================
+// DELETE TOUCHED ZONES (MITIGATION)
+// ==================================================================================
+if array.size(orderBlocks) > 0
+    for i = array.size(orderBlocks) - 1 to 0
+        ob = array.get(orderBlocks, i)
+        
+        if bar_index > ob.createdBar
+            isTouched = low <= ob.topPrice and high >= ob.bottomPrice
+            
+            if isTouched
+                box.delete(ob.zoneBox)
+                if not na(ob.zoneLabel)
+                    label.delete(ob.zoneLabel)
+                array.remove(orderBlocks, i)
+
+// ==================================================================================
+// LIMIT MAXIMUM ZONES
+// ==================================================================================
+while array.size(orderBlocks) > maxZones
+    ob = array.shift(orderBlocks)
+    box.delete(ob.zoneBox)
+    if not na(ob.zoneLabel)
+        label.delete(ob.zoneLabel)
+
+// ==================================================================================
+// STATUS TABLE
+// ==================================================================================
+var table statusTable = table.new(position.top_right, 2, 5,
+     bgcolor=color.new(color.black, 20),
+     border_color=color.gray,
+     border_width=2)
+
+if barstate.islast
+    table.cell(statusTable, 0, 0, "Fresh Zones", 
+         bgcolor=color.new(color.blue, 50), text_color=color.white, text_size=size.normal)
+    table.cell(statusTable, 1, 0, str.tostring(array.size(orderBlocks)), 
+         bgcolor=color.new(color.blue, 50), text_color=color.yellow, text_size=size.large)
+    
+    table.cell(statusTable, 0, 1, "ATR (14)", 
+         bgcolor=color.new(color.black, 70), text_color=color.white)
+    table.cell(statusTable, 1, 1, str.tostring(math.round(atr14, 5)), 
+         bgcolor=color.new(color.black, 70), text_color=color.aqua)
+    
+    table.cell(statusTable, 0, 2, "Multiplier", 
+         bgcolor=color.new(color.black, 70), text_color=color.white)
+    table.cell(statusTable, 1, 2, str.tostring(impulseMultiplier), 
+         bgcolor=color.new(color.black, 70), text_color=color.aqua)
+    
+    table.cell(statusTable, 0, 3, "Min Body", 
+         bgcolor=color.new(color.black, 70), text_color=color.white)
+    table.cell(statusTable, 1, 3, str.tostring(math.round(minBodySize, 5)), 
+         bgcolor=color.new(color.black, 70), text_color=color.orange)
+    
+    table.cell(statusTable, 0, 4, "FVG Required", 
+         bgcolor=color.new(color.black, 70), text_color=color.white)
+    table.cell(statusTable, 1, 4, requireFVG ? "YES" : "NO", 
+         bgcolor=color.new(color.black, 70),
+         text_color=requireFVG ? color.red : color.lime)
+
+// ==================================================================================
+// ALERTS
+// ==================================================================================
+alertcondition(validDemandBlock, "New Demand Block", "Fresh Demand Order Block Created")
+alertcondition(validSupplyBlock, "New Supply Block", "Fresh Supply Order Block Created")
