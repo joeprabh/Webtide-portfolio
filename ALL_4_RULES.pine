@@ -1,0 +1,182 @@
+//@version=6
+indicator("All 4 Rules - Institutional Order Blocks", overlay=true, max_boxes_count=50, max_labels_count=50)
+
+// ==================================================================================
+// ALL 4 RULES EXACTLY AS YOU SPECIFIED
+// ==================================================================================
+// RULE 1: Base Pattern - Red→Green (Demand) OR Green→Red (Supply)
+// RULE 2: The Impulse - Body > 2.0 × ATR (Extended Range Candle)
+// RULE 3: The Imbalance - Fair Value Gap (FVG)
+// RULE 4: The Accomplishment - Break of Structure (10 bars)
+// ==================================================================================
+
+impulseMultiplier = input.float(1.8, "RULE 2: Impulse Multiplier", minval=1.5, maxval=3.0, step=0.1,
+     tooltip="Body must be > ATR × this value. Default 1.8. Use 2.0 for strictest")
+bosLookback = input.int(10, "RULE 4: Structure Lookback", minval=5, maxval=20)
+requireFVG = input.bool(true, "RULE 3: Require FVG", 
+     tooltip="Keep ON for all 4 rules. Turn OFF to skip FVG check")
+maxZones = input.int(25, "Max Fresh Zones")
+
+demandColor = input.color(color.green, "Demand Color")
+supplyColor = input.color(color.red, "Supply Color")
+
+type Zone
+    box b
+    label l
+    int bar
+    float top
+    float bottom
+    bool isDemand
+
+var array<Zone> zones = array.new<Zone>()
+
+// ATR
+atr = ta.atr(14)
+
+// ==================================================================================
+// ZONE DETECTION - ALL 4 RULES
+// ==================================================================================
+if bar_index >= bosLookback + 2
+    
+    // ========================================
+    // RULE 1: BASE PATTERN
+    // ========================================
+    redBase = close[1] < open[1]
+    greenBase = close[1] > open[1]
+    greenImpulse = close > open
+    redImpulse = close < open
+    
+    demandPattern = redBase and greenImpulse
+    supplyPattern = greenBase and redImpulse
+    
+    // ========================================
+    // RULE 2: THE IMPULSE (Body > 2.0 × ATR)
+    // ========================================
+    currentBody = math.abs(close - open)
+    explosiveMove = currentBody > (atr * impulseMultiplier)
+    
+    // ========================================
+    // RULE 3: THE IMBALANCE (Fair Value Gap)
+    // ========================================
+    // Demand FVG: gap between high[2] and low[0]
+    demandFVG = high[2] < low
+    
+    // Supply FVG: gap between low[2] and high[0]
+    supplyFVG = low[2] > high
+    
+    fvgPass_demand = not requireFVG or demandFVG
+    fvgPass_supply = not requireFVG or supplyFVG
+    
+    // ========================================
+    // RULE 4: BREAK OF STRUCTURE
+    // ========================================
+    highestHigh = ta.highest(high, bosLookback)
+    lowestLow = ta.lowest(low, bosLookback)
+    
+    breakHigh = close > highestHigh[1]
+    breakLow = close < lowestLow[1]
+    
+    // ========================================
+    // ALL RULES MUST PASS
+    // ========================================
+    validDemand = demandPattern and explosiveMove and fvgPass_demand and breakHigh
+    validSupply = supplyPattern and explosiveMove and fvgPass_supply and breakLow
+    
+    // ========================================
+    // DRAW DEMAND ZONE (on RED base candle)
+    // ========================================
+    if validDemand
+        // TOP = Body High of red candle = OPEN[1] (because close < open for red)
+        // BOTTOM = Wick Low of red candle = LOW[1]
+        zoneTop = open[1]
+        zoneBottom = low[1]
+        
+        b = box.new(bar_index[1], zoneTop, bar_index + 50, zoneBottom,
+             bgcolor=color.new(demandColor, 85),
+             border_color=demandColor,
+             border_width=2)
+        
+        l = label.new(bar_index + 25, zoneBottom, "DEMAND OB",
+             style=label.style_label_up,
+             color=color.new(demandColor, 20),
+             textcolor=color.white,
+             size=size.tiny)
+        
+        array.push(zones, Zone.new(b, l, bar_index[1], zoneTop, zoneBottom, true))
+    
+    // ========================================
+    // DRAW SUPPLY ZONE (on GREEN base candle)
+    // ========================================
+    if validSupply
+        // TOP = Wick High of green candle = HIGH[1]
+        // BOTTOM = Body Low of green candle = OPEN[1] (because close > open for green)
+        zoneTop = high[1]
+        zoneBottom = open[1]
+        
+        b = box.new(bar_index[1], zoneTop, bar_index + 50, zoneBottom,
+             bgcolor=color.new(supplyColor, 85),
+             border_color=supplyColor,
+             border_width=2)
+        
+        l = label.new(bar_index + 25, zoneTop, "SUPPLY OB",
+             style=label.style_label_down,
+             color=color.new(supplyColor, 20),
+             textcolor=color.white,
+             size=size.tiny)
+        
+        array.push(zones, Zone.new(b, l, bar_index[1], zoneTop, zoneBottom, false))
+
+// ==================================================================================
+// DELETE TOUCHED ZONES (MITIGATION)
+// ==================================================================================
+if array.size(zones) > 0
+    for i = array.size(zones) - 1 to 0
+        z = array.get(zones, i)
+        
+        // Only check zones created BEFORE current bar
+        if bar_index > z.bar
+            // Zone is touched if price overlaps it
+            touched = low <= z.top and high >= z.bottom
+            
+            if touched
+                box.delete(z.b)
+                label.delete(z.l)
+                array.remove(zones, i)
+
+// ==================================================================================
+// LIMIT TOTAL ZONES
+// ==================================================================================
+while array.size(zones) > maxZones
+    z = array.shift(zones)
+    box.delete(z.b)
+    label.delete(z.l)
+
+// ==================================================================================
+// DEBUG TABLE
+// ==================================================================================
+var table t = table.new(position.top_right, 2, 5, bgcolor=color.new(color.black, 20), 
+     border_color=color.gray, border_width=1)
+
+if barstate.islast
+    table.cell(t, 0, 0, "Fresh Zones", text_color=color.white, bgcolor=color.new(color.black, 50))
+    table.cell(t, 1, 0, str.tostring(array.size(zones)), text_color=color.yellow, bgcolor=color.new(color.black, 50))
+    
+    table.cell(t, 0, 1, "ATR", text_color=color.white, bgcolor=color.new(color.black, 50))
+    table.cell(t, 1, 1, str.tostring(math.round(atr, 5)), text_color=color.aqua, bgcolor=color.new(color.black, 50))
+    
+    table.cell(t, 0, 2, "Multiplier", text_color=color.white, bgcolor=color.new(color.black, 50))
+    table.cell(t, 1, 2, str.tostring(impulseMultiplier), text_color=color.aqua, bgcolor=color.new(color.black, 50))
+    
+    table.cell(t, 0, 3, "Min Body", text_color=color.white, bgcolor=color.new(color.black, 50))
+    table.cell(t, 1, 3, str.tostring(math.round(atr * impulseMultiplier, 5)), text_color=color.orange, bgcolor=color.new(color.black, 50))
+    
+    table.cell(t, 0, 4, "FVG Required", text_color=color.white, bgcolor=color.new(color.black, 50))
+    table.cell(t, 1, 4, requireFVG ? "YES" : "NO", 
+         text_color=requireFVG ? color.red : color.lime, 
+         bgcolor=color.new(color.black, 50))
+
+// ==================================================================================
+// ALERTS
+// ==================================================================================
+alertcondition(validDemand, "New Demand Zone", "Fresh DEMAND Order Block created")
+alertcondition(validSupply, "New Supply Zone", "Fresh SUPPLY Order Block created")
