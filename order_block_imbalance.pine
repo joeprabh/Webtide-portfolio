@@ -1,0 +1,462 @@
+// This source code is subject to the terms of the Mozilla Public License 2.0 at https://mozilla.org/MPL/2.0/
+// © Order Block & Imbalance Zones - Institutional Supply & Demand
+//@version=6
+indicator("Order Block & Imbalance Zones", overlay=true, max_boxes_count=500, max_labels_count=500)
+
+// ==================================================================================
+// INPUTS
+// ==================================================================================
+
+impulseMultiplier = input.float(2.0, "Impulse Multiplier (vs ATR)", minval=1.0, maxval=5.0, step=0.1,
+     tooltip="Extended Range Candle must be X times larger than ATR. Default: 2.0")
+pivotLookback = input.int(10, "Break of Structure Lookback", minval=5, maxval=50,
+     tooltip="How many bars to check for structure break. Default: 10")
+atrPeriod = input.int(14, "ATR Period", minval=5, maxval=100,
+     tooltip="Period for Average True Range calculation")
+maxZoneAgeDays = input.int(30, "Max Zone Age (Days)", minval=1, maxval=365,
+     tooltip="Delete zones older than X days")
+maxZonesToShow = input.int(20, "Max Zones to Display", minval=5, maxval=100)
+
+// Visual Settings
+demandColor = input.color(color.new(color.green, 60), "Demand Zone Color")
+supplyColor = input.color(color.new(color.red, 60), "Supply Zone Color")
+showLabels = input.bool(true, "Show Zone Labels")
+
+// ==================================================================================
+// TYPE DEFINITIONS
+// ==================================================================================
+
+type OrderBlock
+    float top
+    float bottom
+    int baseBarIndex
+    int baseBarTime
+    bool isSupply
+    bool isFresh
+    bool hasFVG
+    string timeframeLabel
+
+// ==================================================================================
+// GLOBAL VARIABLES
+// ==================================================================================
+
+var array<OrderBlock> demandBlocks = array.new<OrderBlock>()
+var array<OrderBlock> supplyBlocks = array.new<OrderBlock>()
+var array<box> blockBoxes = array.new<box>()
+var array<label> blockLabels = array.new<label>()
+
+// ==================================================================================
+// TIMEFRAME DETECTION
+// ==================================================================================
+
+getTimeframeLabel() =>
+    string tf = timeframe.period
+    string label = ""
+    
+    if tf == "240"
+        label := "H4"
+    else if tf == "60"
+        label := "H1"
+    else if tf == "15"
+        label := "M15"
+    else if tf == "5"
+        label := "M5"
+    else if tf == "D" or tf == "1D"
+        label := "D1"
+    else if tf == "W" or tf == "1W"
+        label := "W1"
+    else
+        label := tf
+    
+    label
+
+currentTF = getTimeframeLabel()
+
+// ==================================================================================
+// ATR CALCULATION
+// ==================================================================================
+
+atrValue = ta.atr(atrPeriod)
+
+// ==================================================================================
+// HELPER FUNCTIONS
+// ==================================================================================
+
+// Get highest high in last N bars
+getHighestHigh(lookback) =>
+    float highest = high
+    if bar_index >= lookback
+        highest := high[1]
+        for i = 1 to lookback
+            if high[i] > highest
+                highest := high[i]
+    highest
+
+// Get lowest low in last N bars
+getLowestLow(lookback) =>
+    float lowest = low
+    if bar_index >= lookback
+        lowest := low[1]
+        for i = 1 to lookback
+            if low[i] < lowest
+                lowest := low[i]
+    lowest
+
+// ==================================================================================
+// CANDLE PROPERTIES
+// ==================================================================================
+
+// Current candle properties
+isBullish = close > open
+isBearish = close < open
+bodySize = math.abs(close - open)
+candleRange = high - low
+
+// Previous candle properties
+isBullish1 = bar_index >= 1 ? close[1] > open[1] : false
+isBearish1 = bar_index >= 1 ? close[1] < open[1] : false
+bodySize1 = bar_index >= 1 ? math.abs(close[1] - open[1]) : 0
+candleRange1 = bar_index >= 1 ? high[1] - low[1] : 0
+
+// ==================================================================================
+// RULE 1: EXTENDED RANGE CANDLE (ERC) DETECTION
+// ==================================================================================
+
+// Current candle must be an explosive impulse (2x ATR minimum)
+isExtendedRangeBullish = isBullish and bodySize > (atrValue * impulseMultiplier) and bodySize > (candleRange * 0.6)
+isExtendedRangeBearish = isBearish and bodySize > (atrValue * impulseMultiplier) and bodySize > (candleRange * 0.6)
+
+// ==================================================================================
+// BASE CANDLE DETECTION
+// ==================================================================================
+
+// DEMAND BASE: Red candle [1] followed by Green explosive candle [0]
+isDemandBase = bar_index >= 1 and isBearish1 and isExtendedRangeBullish
+
+// SUPPLY BASE: Green candle [1] followed by Red explosive candle [0]
+isSupplyBase = bar_index >= 1 and isBullish1 and isExtendedRangeBearish
+
+// ==================================================================================
+// RULE 2: FAIR VALUE GAP (FVG) / IMBALANCE DETECTION
+// ==================================================================================
+
+// For DEMAND: Check if there's a gap between candle[2] low and current candle high
+checkDemandFVG() =>
+    bool hasFVG = false
+    if bar_index >= 2
+        // FVG exists if: low[2] > high[0] (gap between them)
+        // Or more realistically: high[2] < low[0]
+        float gapHigh = high[2]
+        float gapLow = low[0]
+        
+        // There's an imbalance if the middle candle (base) didn't fill the gap
+        if gapLow > gapHigh
+            hasFVG := true
+    hasFVG
+
+// For SUPPLY: Check if there's a gap between candle[2] high and current candle low
+checkSupplyFVG() =>
+    bool hasFVG = false
+    if bar_index >= 2
+        // FVG exists if: high[2] < low[0] (gap between them)
+        // Or more realistically: low[2] > high[0]
+        float gapLow = low[2]
+        float gapHigh = high[0]
+        
+        // There's an imbalance if the middle candle (base) didn't fill the gap
+        if gapHigh > gapLow
+            hasFVG := true
+    hasFVG
+
+hasDemandFVG = isDemandBase and checkDemandFVG()
+hasSupplyFVG = isSupplyBase and checkSupplyFVG()
+
+// ==================================================================================
+// RULE 3: BREAK OF STRUCTURE (BOS)
+// ==================================================================================
+
+// DEMAND: Current close must break above the highest high of last N bars
+demandBOS = false
+if isDemandBase and bar_index >= pivotLookback
+    highestHigh = getHighestHigh(pivotLookback)
+    if close > highestHigh
+        demandBOS := true
+
+// SUPPLY: Current close must break below the lowest low of last N bars
+supplyBOS = false
+if isSupplyBase and bar_index >= pivotLookback
+    lowestLow = getLowestLow(pivotLookback)
+    if close < lowestLow
+        supplyBOS := true
+
+// ==================================================================================
+// ZONE CALCULATION (Draw on BASE Candle Only)
+// ==================================================================================
+
+calculateDemandZone() =>
+    float zoneTop = na
+    float zoneBottom = na
+    int baseBar = na
+    int baseTime = na
+    
+    if bar_index >= 1
+        // Base is the RED candle [1]
+        // Top: Body High of red candle (the higher of open/close)
+        zoneTop := math.max(close[1], open[1])
+        // Bottom: Wick Low of red candle
+        zoneBottom := low[1]
+        // Bar index and time of the base candle
+        baseBar := bar_index - 1
+        baseTime := time[1]
+    
+    [zoneTop, zoneBottom, baseBar, baseTime]
+
+calculateSupplyZone() =>
+    float zoneTop = na
+    float zoneBottom = na
+    int baseBar = na
+    int baseTime = na
+    
+    if bar_index >= 1
+        // Base is the GREEN candle [1]
+        // Top: Wick High of green candle
+        zoneTop := high[1]
+        // Bottom: Body Low of green candle (the lower of open/close)
+        zoneBottom := math.min(close[1], open[1])
+        // Bar index and time of the base candle
+        baseBar := bar_index - 1
+        baseTime := time[1]
+    
+    [zoneTop, zoneBottom, baseBar, baseTime]
+
+// ==================================================================================
+// ORDER BLOCK VALIDATION & CREATION
+// ==================================================================================
+
+// All 3 rules must pass for valid Order Block
+validDemandBlock = isDemandBase and demandBOS and hasDemandFVG
+validSupplyBlock = isSupplyBase and supplyBOS and hasSupplyFVG
+
+// Create new demand block
+if validDemandBlock
+    [top, bottom, baseBar, baseTime] = calculateDemandZone()
+    if not na(top) and not na(bottom) and top > bottom
+        newBlock = OrderBlock.new(
+             top = top,
+             bottom = bottom,
+             baseBarIndex = baseBar,
+             baseBarTime = baseTime,
+             isSupply = false,
+             isFresh = true,
+             hasFVG = true,
+             timeframeLabel = currentTF
+         )
+        array.unshift(demandBlocks, newBlock)
+
+// Create new supply block
+if validSupplyBlock
+    [top, bottom, baseBar, baseTime] = calculateSupplyZone()
+    if not na(top) and not na(bottom) and top > bottom
+        newBlock = OrderBlock.new(
+             top = top,
+             bottom = bottom,
+             baseBarIndex = baseBar,
+             baseBarTime = baseTime,
+             isSupply = true,
+             isFresh = true,
+             hasFVG = true,
+             timeframeLabel = currentTF
+         )
+        array.unshift(supplyBlocks, newBlock)
+
+// ==================================================================================
+// ZONE MITIGATION & FRESHNESS TRACKING
+// ==================================================================================
+
+// Update demand blocks - check if price touched them
+if array.size(demandBlocks) > 0
+    for i = 0 to array.size(demandBlocks) - 1
+        block = array.get(demandBlocks, i)
+        // Mitigation: Price touched the zone (low reached the top of zone)
+        if low <= block.top and high >= block.bottom
+            block.isFresh := false
+        array.set(demandBlocks, i, block)
+
+// Update supply blocks - check if price touched them
+if array.size(supplyBlocks) > 0
+    for i = 0 to array.size(supplyBlocks) - 1
+        block = array.get(supplyBlocks, i)
+        // Mitigation: Price touched the zone (high reached the bottom of zone)
+        if low <= block.top and high >= block.bottom
+            block.isFresh := false
+        array.set(supplyBlocks, i, block)
+
+// ==================================================================================
+// ZONE CLEANUP (Remove Mitigated & Old Zones)
+// ==================================================================================
+
+// Calculate max age in bars
+int barsPerDay = timeframe.in_seconds() > 0 ? int(86400 / timeframe.in_seconds()) : 24
+int maxAgeBars = maxZoneAgeDays * barsPerDay
+
+// Clean demand blocks
+if array.size(demandBlocks) > 0
+    int i = 0
+    while i < array.size(demandBlocks)
+        block = array.get(demandBlocks, i)
+        int blockAge = bar_index - block.baseBarIndex
+        
+        // Delete if: mitigated OR too old
+        if not block.isFresh or blockAge > maxAgeBars
+            array.remove(demandBlocks, i)
+        else
+            i += 1
+
+// Clean supply blocks
+if array.size(supplyBlocks) > 0
+    int i = 0
+    while i < array.size(supplyBlocks)
+        block = array.get(supplyBlocks, i)
+        int blockAge = bar_index - block.baseBarIndex
+        
+        // Delete if: mitigated OR too old
+        if not block.isFresh or blockAge > maxAgeBars
+            array.remove(supplyBlocks, i)
+        else
+            i += 1
+
+// Limit total zones
+while array.size(demandBlocks) > maxZonesToShow
+    array.pop(demandBlocks)
+
+while array.size(supplyBlocks) > maxZonesToShow
+    array.pop(supplyBlocks)
+
+// ==================================================================================
+// VISUALIZATION
+// ==================================================================================
+
+// Clear old drawings
+if barstate.islast
+    while array.size(blockBoxes) > 0
+        box.delete(array.shift(blockBoxes))
+    
+    while array.size(blockLabels) > 0
+        label.delete(array.shift(blockLabels))
+    
+    // Draw Demand Blocks
+    if array.size(demandBlocks) > 0
+        for i = 0 to array.size(demandBlocks) - 1
+            block = array.get(demandBlocks, i)
+            
+            if block.isFresh
+                // Calculate right edge (extend 50 bars or to current bar)
+                int rightEdge = math.max(bar_index, block.baseBarIndex + 50)
+                
+                // Draw box using xloc.bar_time for precise positioning
+                blockBox = box.new(
+                     left = block.baseBarTime,
+                     top = block.top,
+                     right = time,
+                     bottom = block.bottom,
+                     border_color = color.new(color.green, 40),
+                     bgcolor = demandColor,
+                     border_width = 1,
+                     extend = extend.right,
+                     xloc = xloc.bar_time
+                 )
+                array.push(blockBoxes, blockBox)
+                
+                // Draw minimal label at right edge
+                if showLabels
+                    labelText = block.timeframeLabel + " OB"
+                    blockLabel = label.new(
+                         x = time,
+                         y = block.bottom,
+                         text = labelText,
+                         style = label.style_label_up,
+                         color = color.new(color.green, 20),
+                         textcolor = color.white,
+                         size = size.tiny,
+                         xloc = xloc.bar_time
+                     )
+                    array.push(blockLabels, blockLabel)
+    
+    // Draw Supply Blocks
+    if array.size(supplyBlocks) > 0
+        for i = 0 to array.size(supplyBlocks) - 1
+            block = array.get(supplyBlocks, i)
+            
+            if block.isFresh
+                // Calculate right edge (extend 50 bars or to current bar)
+                int rightEdge = math.max(bar_index, block.baseBarIndex + 50)
+                
+                // Draw box using xloc.bar_time for precise positioning
+                blockBox = box.new(
+                     left = block.baseBarTime,
+                     top = block.top,
+                     right = time,
+                     bottom = block.bottom,
+                     border_color = color.new(color.red, 40),
+                     bgcolor = supplyColor,
+                     border_width = 1,
+                     extend = extend.right,
+                     xloc = xloc.bar_time
+                 )
+                array.push(blockBoxes, blockBox)
+                
+                // Draw minimal label at right edge
+                if showLabels
+                    labelText = block.timeframeLabel + " OB"
+                    blockLabel = label.new(
+                         x = time,
+                         y = block.top,
+                         text = labelText,
+                         style = label.style_label_down,
+                         color = color.new(color.red, 20),
+                         textcolor = color.white,
+                         size = size.tiny,
+                         xloc = xloc.bar_time
+                     )
+                    array.push(blockLabels, blockLabel)
+
+// ==================================================================================
+// ALERTS
+// ==================================================================================
+
+alertcondition(validDemandBlock, title="New Demand Order Block", 
+     message="New Demand Order Block detected with FVG and BOS!")
+alertcondition(validSupplyBlock, title="New Supply Order Block", 
+     message="New Supply Order Block detected with FVG and BOS!")
+
+// Price entering fresh blocks
+priceInDemand = false
+priceInSupply = false
+
+if array.size(demandBlocks) > 0
+    for i = 0 to array.size(demandBlocks) - 1
+        block = array.get(demandBlocks, i)
+        if block.isFresh and low <= block.top and high >= block.bottom
+            priceInDemand := true
+            break
+
+if array.size(supplyBlocks) > 0
+    for i = 0 to array.size(supplyBlocks) - 1
+        block = array.get(supplyBlocks, i)
+        if block.isFresh and low <= block.top and high >= block.bottom
+            priceInSupply := true
+            break
+
+alertcondition(priceInDemand, title="Price in Demand Block", 
+     message="Price entered fresh Demand Order Block!")
+alertcondition(priceInSupply, title="Price in Supply Block", 
+     message="Price entered fresh Supply Order Block!")
+
+// ==================================================================================
+// DEBUG PLOTS
+// ==================================================================================
+
+// Visual indicators for valid setups
+plotchar(validDemandBlock, "Demand OB", "▲", location.belowbar, color.green, size=size.small)
+plotchar(validSupplyBlock, "Supply OB", "▼", location.abovebar, color.red, size=size.small)
+plot(atrValue, "ATR", color=color.new(color.gray, 90), display=display.none)
