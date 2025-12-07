@@ -1,0 +1,391 @@
+//@version=6
+indicator("Impulse Supply & Demand (4H + 1H) - Golden Checklist", overlay = true, max_boxes_count = 500, max_labels_count = 200)
+
+//========================================
+// INPUTS
+//========================================
+tf4H           = input.timeframe("240", "4H Timeframe")
+tf1H           = input.timeframe("60",  "1H Timeframe")
+extendBars     = input.int(500, "Extend Bars Right", minval = 1)
+
+minZoneSize    = input.float(0.0, "Min Zone Size (price units)", minval = 0.0)
+
+// Impulse detection
+impulseAtrMult = input.float(1.0, "Impulse Size vs ATR", minval = 0.1)
+
+// Base candle behaviour (precise box drawing rules)
+// If wick is >= 2x the body, ignore the lower/upper 50% of the wick.
+longWickRatio  = input.float(2.0, "Long Wick Ratio (2.0 = ignore 50% of long wick)", minval = 0.1)
+
+// Golden checklist controls
+swingLookback  = input.int(10, "Swing Lookback Bars", minval = 2)
+sweepLookback  = input.int(10, "Liquidity Sweep Lookback", minval = 2)
+maxBaseBars    = input.int(3, "Max Base Candles Before Impulse", minval = 1, maxval = 5)
+
+// Life-cycle
+touchMode      = input.string("wick", "Touch Mode", options = ["wick", "body"])
+expireBars     = input.int(0, "Expire After Bars (0 = off)", minval = 0)
+keepLatestOnly = input.bool(true, "Keep Only Latest Zone per TF/Side")
+
+// Colours (desert-ish)
+color4HSupply  = input.color(color.new(color.rgb(190, 120, 90), 65), "4H Supply")
+color4HDemand  = input.color(color.new(color.rgb(120, 170, 150), 65), "4H Demand")
+color1HSupply  = input.color(color.new(color.rgb(210, 160, 100), 65), "1H Supply")
+color1HDemand  = input.color(color.new(color.rgb(135, 160, 200), 65), "1H Demand")
+
+//========================================
+// TYPES
+//========================================
+type Zone
+    int    bornIndex
+    float  top
+    float  bottom
+    bool   fresh
+    string tf          // "240" or "60"
+    string side        // "supply" or "demand"
+    box    boxId
+    label  labelId
+
+//========================================
+// STORAGE
+//========================================
+var array<Zone> zones = array.new<Zone>()
+
+//========================================
+// HELPER FUNCTIONS
+//========================================
+getZoneColor(string tf, string side) =>
+    color baseColor =
+        if tf == "240"
+            if side == "supply"
+                color4HSupply
+            else
+                color4HDemand
+        else
+            if side == "supply"
+                color1HSupply
+            else
+                color1HDemand
+    baseColor
+
+// Has current bar touched zone?
+isTouched(Zone z) =>
+    if touchMode == "wick"
+        high >= z.bottom and low <= z.top
+    else
+        bodyTop = math.max(open, close)
+        bodyBot = math.min(open, close)
+        bodyTop >= z.bottom and bodyBot <= z.top
+
+// Build demand zone from base candle following precise box rules
+f_demandFromBase(float o, float c, float h, float l) =>
+    bodyTop   = math.max(o, c)
+    bodyBot   = math.min(o, c)
+    bodySize  = bodyTop - bodyBot
+    wickDown  = bodyBot - l
+
+    zTop    = bodyTop
+    zBottom = bodyBot - (wickDown >= bodySize * longWickRatio ? wickDown * 0.5 : wickDown)
+    [zTop, zBottom]
+
+// Build supply zone from base candle (mirror of demand rule)
+f_supplyFromBase(float o, float c, float h, float l) =>
+    bodyTop   = math.max(o, c)
+    bodyBot   = math.min(o, c)
+    bodySize  = bodyTop - bodyBot
+    wickUp    = h - bodyTop
+
+    zBottom = bodyBot
+    zTop    = bodyTop + (wickUp >= bodySize * longWickRatio ? wickUp * 0.5 : wickUp)
+    [zTop, zBottom]
+
+// Create new zone (box glued to base candle)
+createZone(int bornIdx, float top, float bottom, string tf, string side) =>
+    z = Zone.new()
+    z.bornIndex := bornIdx
+    z.top       := top
+    z.bottom    := bottom
+    z.fresh     := true
+    z.tf        := tf
+    z.side      := side
+
+    zoneColor   = getZoneColor(tf, side)
+    z.boxId     := box.new(bornIdx, top, bornIdx + extendBars, bottom,
+                        xloc = xloc.bar_index,
+                        extend = extend.right,
+                        border_color = zoneColor,
+                        bgcolor = zoneColor,
+                        border_width = 1)
+
+    labelText   = (tf == "240" ? "H4 " : "H1 ") + (side == "supply" ? "S" : "D") + " FRESH"
+    labelY      = side == "supply" ? top : bottom
+    z.labelId   := label.new(bornIdx, labelY, labelText,
+                        xloc = xloc.bar_index,
+                        style = side == "supply" ? label.style_label_down : label.style_label_up,
+                        size  = size.tiny,
+                        color = zoneColor,
+                        textcolor = color.white)
+    z
+
+deleteZone(Zone z) =>
+    if not na(z.boxId)
+        box.delete(z.boxId)
+    if not na(z.labelId)
+        label.delete(z.labelId)
+
+// Find latest zone index for given tf + side
+findZoneIndex(string tf, string side) =>
+    idx = -1
+    for i = 0 to array.size(zones) - 1
+        z = array.get(zones, i)
+        if z.tf == tf and z.side == side
+            idx := i
+    idx
+
+removeZone(int idx) =>
+    if idx >= 0 and idx < array.size(zones)
+        z = array.get(zones, idx)
+        deleteZone(z)
+        array.remove(zones, idx)
+
+// Determine whether consolidation before impulse stayed tight (1-3 candles, low range)
+// baseOffset is the impulse candle index (1 for our usage)
+isTightBase(float[] highs, float[] lows, int baseOffset) =>
+    startIdx = baseOffset + 1
+    endIdx   = baseOffset + maxBaseBars
+    hiBase   = na(float)
+    loBase   = na(float)
+    barsCount = 0
+    for j = startIdx to endIdx
+        if j < array.size(highs) and j < array.size(lows)
+            if not na(array.get(highs, j)) and not na(array.get(lows, j))
+                hiBase := na(hiBase) ? array.get(highs, j) : math.max(hiBase, array.get(highs, j))
+                loBase := na(loBase) ? array.get(lows, j) : math.min(loBase, array.get(lows, j))
+                barsCount += 1
+    
+    result = false
+    if barsCount > 0 and barsCount <= maxBaseBars and not na(hiBase) and not na(loBase)
+        rangeImpulse = array.get(highs, baseOffset) - array.get(lows, baseOffset)
+        rangeBase    = hiBase - loBase
+        result := rangeBase < rangeImpulse
+    result
+
+// Liquidity sweep check: did base candle run stops relative to nearby structure?
+liquiditySweep(bool isDemand, float[] highs, float[] lows, int baseOffset) =>
+    result = false
+    lookBack = math.max(2, sweepLookback)
+    
+    if isDemand
+        if (baseOffset + 2) < array.size(lows) and (baseOffset + 3 + lookBack) < array.size(lows)
+            priorLow = array.get(lows, baseOffset + 3)
+            for j = 0 to lookBack - 1
+                if (baseOffset + 3 + j) < array.size(lows)
+                    priorLow := math.min(priorLow, array.get(lows, baseOffset + 3 + j))
+            result := array.get(lows, baseOffset + 2) < priorLow
+    else
+        if (baseOffset + 2) < array.size(highs) and (baseOffset + 3 + lookBack) < array.size(highs)
+            priorHigh = array.get(highs, baseOffset + 3)
+            for j = 0 to lookBack - 1
+                if (baseOffset + 3 + j) < array.size(highs)
+                    priorHigh := math.max(priorHigh, array.get(highs, baseOffset + 3 + j))
+            result := array.get(highs, baseOffset + 2) > priorHigh
+    
+    result
+
+// Break of structure: impulse must clear significant swing
+brokeStructure(bool isDemand, float[] highs, float[] lows, int baseOffset, float impHigh, float impLow) =>
+    result = false
+    pivotLen = math.max(2, swingLookback)
+    
+    if isDemand
+        if (baseOffset + 2 + pivotLen) < array.size(highs)
+            swingHigh = array.get(highs, baseOffset + 2)
+            for j = 0 to pivotLen - 1
+                if (baseOffset + 2 + j) < array.size(highs)
+                    swingHigh := math.max(swingHigh, array.get(highs, baseOffset + 2 + j))
+            result := impHigh > swingHigh
+    else
+        if (baseOffset + 2 + pivotLen) < array.size(lows)
+            swingLow = array.get(lows, baseOffset + 2)
+            for j = 0 to pivotLen - 1
+                if (baseOffset + 2 + j) < array.size(lows)
+                    swingLow := math.min(swingLow, array.get(lows, baseOffset + 2 + j))
+            result := impLow < swingLow
+    
+    result
+
+//========================================
+// HTF DATA - Store in arrays
+//========================================
+var array<float> h4H_array = array.new<float>(100, na)
+var array<float> l4H_array = array.new<float>(100, na)
+var array<float> o4H_array = array.new<float>(100, na)
+var array<float> c4H_array = array.new<float>(100, na)
+
+var array<float> h1H_array = array.new<float>(100, na)
+var array<float> l1H_array = array.new<float>(100, na)
+var array<float> o1H_array = array.new<float>(100, na)
+var array<float> c1H_array = array.new<float>(100, na)
+
+[o4H, h4H, l4H, c4H, t4H] = request.security(syminfo.tickerid, tf4H, [open, high, low, close, time], lookahead = barmerge.lookahead_off)
+[o1H, h1H, l1H, c1H, t1H] = request.security(syminfo.tickerid, tf1H, [open, high, low, close, time], lookahead = barmerge.lookahead_off)
+
+atr4H = request.security(syminfo.tickerid, tf4H, ta.atr(14), lookahead = barmerge.lookahead_off)
+atr1H = request.security(syminfo.tickerid, tf1H, ta.atr(14), lookahead = barmerge.lookahead_off)
+
+// Detect first LTF bar of a new HTF candle
+new4H = ta.change(t4H)
+new1H = ta.change(t1H)
+
+// Update arrays with HTF data
+if new4H
+    array.unshift(h4H_array, h4H[1])
+    array.unshift(l4H_array, l4H[1])
+    array.unshift(o4H_array, o4H[1])
+    array.unshift(c4H_array, c4H[1])
+    if array.size(h4H_array) > 100
+        array.pop(h4H_array)
+        array.pop(l4H_array)
+        array.pop(o4H_array)
+        array.pop(c4H_array)
+
+if new1H
+    array.unshift(h1H_array, h1H[1])
+    array.unshift(l1H_array, l1H[1])
+    array.unshift(o1H_array, o1H[1])
+    array.unshift(c1H_array, c1H[1])
+    if array.size(h1H_array) > 100
+        array.pop(h1H_array)
+        array.pop(l1H_array)
+        array.pop(o1H_array)
+        array.pop(c1H_array)
+
+//========================================
+// 4H IMPULSE-BASED ZONES
+//========================================
+if new4H and not na(o4H[2]) and not na(atr4H[1]) and array.size(h4H_array) >= maxBaseBars + 4
+    // impulse candle = just closed 4H bar (index 0 in array after unshift)
+    impO = array.get(o4H_array, 0)
+    impH = array.get(h4H_array, 0)
+    impL = array.get(l4H_array, 0)
+    impC = array.get(c4H_array, 0)
+
+    // base candle = one bar before impulse (index 1 in array)
+    baseO = array.get(o4H_array, 1)
+    baseH = array.get(h4H_array, 1)
+    baseL = array.get(l4H_array, 1)
+    baseC = array.get(c4H_array, 1)
+
+    rng    = impH - impL
+    atrVal = atr4H[1]
+    bigMove = rng >= atrVal * impulseAtrMult
+
+    upImpulse   = bigMove and impC > impO and impC > baseH
+    downImpulse = bigMove and impC < impO and impC < baseL
+
+    baseTime4 = t4H[2]
+    baseIdx4  = int(ta.valuewhen(t4H == baseTime4, bar_index, 0))
+
+    // Golden checklist filters
+    tightBase    = isTightBase(h4H_array, l4H_array, 0)
+    sweptLiqUp   = liquiditySweep(true, h4H_array, l4H_array, 0)
+    sweptLiqDown = liquiditySweep(false, h4H_array, l4H_array, 0)
+    bosUp        = brokeStructure(true, h4H_array, l4H_array, 0, impH, impL)
+    bosDown      = brokeStructure(false, h4H_array, l4H_array, 0, impH, impL)
+
+    if baseIdx4 >= 0
+        if upImpulse and tightBase and sweptLiqUp and bosUp
+            [zTopD, zBotD] = f_demandFromBase(baseO, baseC, baseH, baseL)
+            if not na(zTopD) and zTopD - zBotD >= minZoneSize
+                if keepLatestOnly
+                    oldIdx = findZoneIndex("240", "demand")
+                    if oldIdx >= 0
+                        removeZone(oldIdx)
+                array.push(zones, createZone(baseIdx4, zTopD, zBotD, "240", "demand"))
+
+        if downImpulse and tightBase and sweptLiqDown and bosDown
+            [zTopS, zBotS] = f_supplyFromBase(baseO, baseC, baseH, baseL)
+            if not na(zTopS) and zTopS - zBotS >= minZoneSize
+                if keepLatestOnly
+                    oldIdx2 = findZoneIndex("240", "supply")
+                    if oldIdx2 >= 0
+                        removeZone(oldIdx2)
+                array.push(zones, createZone(baseIdx4, zTopS, zBotS, "240", "supply"))
+
+//========================================
+// 1H IMPULSE-BASED ZONES
+//========================================
+if new1H and not na(o1H[2]) and not na(atr1H[1]) and array.size(h1H_array) >= maxBaseBars + 4
+    impO1 = array.get(o1H_array, 0)
+    impH1 = array.get(h1H_array, 0)
+    impL1 = array.get(l1H_array, 0)
+    impC1 = array.get(c1H_array, 0)
+
+    baseO1 = array.get(o1H_array, 1)
+    baseH1 = array.get(h1H_array, 1)
+    baseL1 = array.get(l1H_array, 1)
+    baseC1 = array.get(c1H_array, 1)
+
+    rng1     = impH1 - impL1
+    atrVal1  = atr1H[1]
+    bigMove1 = rng1 >= atrVal1 * impulseAtrMult
+
+    upImpulse1   = bigMove1 and impC1 > impO1 and impC1 > baseH1
+    downImpulse1 = bigMove1 and impC1 < impO1 and impC1 < baseL1
+
+    baseTime1 = t1H[2]
+    baseIdx1  = int(ta.valuewhen(t1H == baseTime1, bar_index, 0))
+
+    // Golden checklist filters
+    tightBase1    = isTightBase(h1H_array, l1H_array, 0)
+    sweptLiqUp1   = liquiditySweep(true, h1H_array, l1H_array, 0)
+    sweptLiqDown1 = liquiditySweep(false, h1H_array, l1H_array, 0)
+    bosUp1        = brokeStructure(true, h1H_array, l1H_array, 0, impH1, impL1)
+    bosDown1      = brokeStructure(false, h1H_array, l1H_array, 0, impH1, impL1)
+
+    if baseIdx1 >= 0
+        if upImpulse1 and tightBase1 and sweptLiqUp1 and bosUp1
+            [zTopD1, zBotD1] = f_demandFromBase(baseO1, baseC1, baseH1, baseL1)
+            if not na(zTopD1) and zTopD1 - zBotD1 >= minZoneSize
+                if keepLatestOnly
+                    oldIdx3 = findZoneIndex("60", "demand")
+                    if oldIdx3 >= 0
+                        removeZone(oldIdx3)
+                array.push(zones, createZone(baseIdx1, zTopD1, zBotD1, "60", "demand"))
+
+        if downImpulse1 and tightBase1 and sweptLiqDown1 and bosDown1
+            [zTopS1, zBotS1] = f_supplyFromBase(baseO1, baseC1, baseH1, baseL1)
+            if not na(zTopS1) and zTopS1 - zBotS1 >= minZoneSize
+                if keepLatestOnly
+                    oldIdx4 = findZoneIndex("60", "supply")
+                    if oldIdx4 >= 0
+                        removeZone(oldIdx4)
+                array.push(zones, createZone(baseIdx1, zTopS1, zBotS1, "60", "supply"))
+
+//========================================
+// UPDATE EXISTING ZONES (touch / expire)
+//========================================
+if array.size(zones) > 0
+    i = array.size(zones) - 1
+    while i >= 0
+        z = array.get(zones, i)
+
+        // Expire by age
+        if expireBars > 0 and (bar_index - z.bornIndex) > expireBars
+            removeZone(i)
+            i -= 1
+            continue
+
+        // Fresh -> touched (freshness rule: delete on first touch)
+        if z.fresh and isTouched(z)
+            removeZone(i)
+            i -= 1
+            continue
+
+        array.set(zones, i, z)
+        i -= 1
+
+//========================================
+// ALERT
+//========================================
+alertcondition(array.size(zones) > 0, "Zone Alert", "Impulse Supply/Demand Zone Created")
