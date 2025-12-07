@@ -6,15 +6,15 @@ indicator("GUARANTEED ZONES - Working", overlay=true, max_boxes_count=100, max_l
 // ==================================================================================
 
 // RELAXED DEFAULTS - WILL SHOW ZONES
-bodyMult = input.float(1.2, "Body Multiplier", minval=0.8, maxval=3.0, step=0.1,
-     group="Rules", tooltip="1.2 = Will show zones | 2.0 = Very strict")
+bodyMult = input.float(1.1, "Body Multiplier", minval=0.5, maxval=3.0, step=0.1,
+     group="Rules", tooltip="1.1 = Will show zones | 2.0 = Very strict")
 useFVG = input.bool(false, "Use FVG Rule (Rule 3)", 
      group="Rules", tooltip="Turn OFF to see more zones")
-useBOS = input.bool(true, "Use BOS Rule (Rule 4)", group="Rules")
+useBOS = input.bool(false, "Use BOS Rule (Rule 4)", group="Rules", tooltip="Turn OFF to see more zones")
 bosLen = input.int(10, "BOS Lookback", group="Rules")
 
-deleteOnTouch = input.bool(false, "Delete Touched Zones", 
-     group="Management", tooltip="Keep OFF to see all zones")
+deleteOnTouch = input.bool(true, "Delete Touched Zones", 
+     group="Management", tooltip="ON = Only fresh zones")
 maxShow = input.int(50, "Max Zones", group="Management")
 
 // ==================================================================================
