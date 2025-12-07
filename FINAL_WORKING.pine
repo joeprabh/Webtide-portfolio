@@ -1,0 +1,177 @@
+//@version=6
+indicator("Institutional Order Blocks", overlay=true, max_boxes_count=50, max_labels_count=50)
+
+// ==================================================================================
+// INPUTS
+// ==================================================================================
+impulseMultiplier = input.float(1.5, "Impulse Multiplier", minval=1.0, maxval=3.0, tooltip="Body must be > X times ATR. Start with 1.5")
+swingLookback = input.int(10, "Structure Lookback", minval=5, maxval=20, tooltip="Bars to check for structure break")
+requireFVG = input.bool(true, "Require Fair Value Gap?", tooltip="Turn OFF to see more zones")
+maxZoneAge = input.int(30, "Max Zone Age (Days)", minval=1, maxval=365)
+showLabels = input.bool(true, "Show Labels")
+
+// ==================================================================================
+// CALCULATIONS
+// ==================================================================================
+atr = ta.atr(14)
+
+// Current candle
+body = math.abs(close - open)
+isBull = close > open
+isBear = close < open
+
+// Previous candle (BASE CANDLE)
+wasRed = close[1] < open[1]
+wasGreen = close[1] > open[1]
+
+// ==================================================================================
+// RULE 1: THE BASE
+// ==================================================================================
+// Demand: Red candle [1]
+// Supply: Green candle [1]
+
+// ==================================================================================
+// RULE 2: THE IMPULSE (Extended Range Candle)
+// ==================================================================================
+// Current candle must have big body
+explosiveBull = isBull and body > (atr * impulseMultiplier)
+explosiveBear = isBear and body > (atr * impulseMultiplier)
+
+// ==================================================================================
+// RULE 3: THE IMBALANCE (FVG - Fair Value Gap)
+// ==================================================================================
+// Gap between high[2] and low[0] for demand
+// Gap between low[2] and high[0] for supply
+hasDemandFVG = bar_index >= 2 ? high[2] < low : false
+hasSupplyFVG = bar_index >= 2 ? low[2] > high : false
+
+// ==================================================================================
+// RULE 4: THE ACCOMPLISHMENT (Break of Structure)
+// ==================================================================================
+highestHigh = ta.highest(high, swingLookback)
+lowestLow = ta.lowest(low, swingLookback)
+
+breakHigh = close > highestHigh[1]
+breakLow = close < lowestLow[1]
+
+// ==================================================================================
+// VALID ZONES (Red→Green + Rules)
+// ==================================================================================
+validDemand = wasRed and explosiveBull and breakHigh and (not requireFVG or hasDemandFVG)
+validSupply = wasGreen and explosiveBear and breakLow and (not requireFVG or hasSupplyFVG)
+
+// ==================================================================================
+// ZONE STORAGE
+// ==================================================================================
+type Zone
+    box b
+    label l
+    int barIdx
+    float top
+    float bottom
+
+var array<Zone> zones = array.new<Zone>()
+
+// ==================================================================================
+// CREATE DEMAND ZONE (On RED base candle)
+// ==================================================================================
+if validDemand and bar_index >= 1
+    // TOP = Body High of red candle (OPEN, since close < open)
+    // BOTTOM = Wick Low
+    float top = open[1]
+    float bottom = low[1]
+    
+    b = box.new(time[1], top, time, bottom, 
+         bgcolor=color.new(color.green, 85), 
+         border_color=color.green, 
+         border_width=2, 
+         extend=extend.right, 
+         xloc=xloc.bar_time)
+    
+    label l = na
+    if showLabels
+        l := label.new(time, bottom, "DEMAND", 
+             style=label.style_label_up, 
+             color=color.green, 
+             textcolor=color.white, 
+             xloc=xloc.bar_time)
+    
+    z = Zone.new(b, l, bar_index - 1, top, bottom)
+    array.push(zones, z)
+
+// ==================================================================================
+// CREATE SUPPLY ZONE (On GREEN base candle)
+// ==================================================================================
+if validSupply and bar_index >= 1
+    // TOP = Wick High
+    // BOTTOM = Body Low of green candle (OPEN, since close > open)
+    float top = high[1]
+    float bottom = open[1]
+    
+    b = box.new(time[1], top, time, bottom, 
+         bgcolor=color.new(color.red, 85), 
+         border_color=color.red, 
+         border_width=2, 
+         extend=extend.right, 
+         xloc=xloc.bar_time)
+    
+    label l = na
+    if showLabels
+        l := label.new(time, top, "SUPPLY", 
+             style=label.style_label_down, 
+             color=color.red, 
+             textcolor=color.white, 
+             xloc=xloc.bar_time)
+    
+    z = Zone.new(b, l, bar_index - 1, top, bottom)
+    array.push(zones, z)
+
+// ==================================================================================
+// MANAGEMENT: DELETE TOUCHED ZONES
+// ==================================================================================
+if array.size(zones) > 0
+    for i = array.size(zones) - 1 to 0
+        z = array.get(zones, i)
+        
+        // Price touched zone?
+        if low <= z.top and high >= z.bottom
+            box.delete(z.b)
+            if not na(z.l)
+                label.delete(z.l)
+            array.remove(zones, i)
+
+// ==================================================================================
+// MANAGEMENT: DELETE OLD ZONES (30 Days)
+// ==================================================================================
+int barsPerDay = timeframe.in_seconds() > 0 ? math.round(86400 / timeframe.in_seconds()) : 24
+int maxBars = maxZoneAge * barsPerDay
+
+if array.size(zones) > 0
+    for i = array.size(zones) - 1 to 0
+        z = array.get(zones, i)
+        if bar_index - z.barIdx > maxBars
+            box.delete(z.b)
+            if not na(z.l)
+                label.delete(z.l)
+            array.remove(zones, i)
+
+// ==================================================================================
+// UPDATE LABELS TO RIGHT EDGE
+// ==================================================================================
+if barstate.islast and array.size(zones) > 0
+    for z in zones
+        if not na(z.l)
+            label.set_x(z.l, time)
+
+// Keep max 30 zones
+while array.size(zones) > 30
+    z = array.shift(zones)
+    box.delete(z.b)
+    if not na(z.l)
+        label.delete(z.l)
+
+// ==================================================================================
+// ALERTS
+// ==================================================================================
+alertcondition(validDemand, "Demand Zone", "DEMAND Order Block Created")
+alertcondition(validSupply, "Supply Zone", "SUPPLY Order Block Created")

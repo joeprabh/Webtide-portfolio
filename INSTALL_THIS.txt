@@ -1,0 +1,60 @@
+========================================
+INSTALL: FINAL_WORKING.pine
+========================================
+
+YOU SAW BOXES WORK IN THE TEST!
+Now this adds your EXACT RULES:
+
+✓ Rule 1: THE BASE (Red→Green or Green→Red)
+✓ Rule 2: THE IMPULSE (Body > 1.5x ATR)
+✓ Rule 3: THE IMBALANCE (FVG - can turn off)
+✓ Rule 4: THE ACCOMPLISHMENT (Structure Break)
+
+PLUS:
+✓ Drawn on BASE candle (red or green)
+✓ DEMAND: Top=Body High, Bottom=Wick Low
+✓ SUPPLY: Top=Wick High, Bottom=Body Low
+✓ Delete on touch
+✓ Delete after 30 days
+
+========================================
+INSTALL STEPS:
+========================================
+
+1. Copy ALL code from: FINAL_WORKING.pine
+2. TradingView → Pine Editor → New Indicator
+3. Paste → Save as "Order Blocks"
+4. Add to Chart
+5. Use 4H or 1H timeframe
+
+========================================
+SETTINGS (Click ⚙️):
+========================================
+
+Impulse Multiplier: 1.5 (good default)
+Structure Lookback: 10
+Require Fair Value Gap?: ON (turn OFF for more zones)
+Max Zone Age: 30 days
+Show Labels: ON
+
+========================================
+TO SEE MORE ZONES:
+========================================
+
+If zones are rare:
+- Turn OFF "Require Fair Value Gap"
+- OR lower Impulse to 1.3 or 1.2
+
+Your rules are strict - zones will be rare
+This is CORRECT behavior
+
+========================================
+WHAT YOU'LL SEE:
+========================================
+
+🟢 Green boxes = DEMAND (buy zones)
+🔴 Red boxes = SUPPLY (sell zones)
+Labels: "DEMAND" or "SUPPLY"
+Zones extend right until touched
+
+========================================
