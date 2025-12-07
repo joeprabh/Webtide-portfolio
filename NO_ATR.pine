@@ -1,0 +1,130 @@
+//@version=6
+indicator("Order Blocks - No ATR", overlay=true, max_boxes_count=50, max_labels_count=50)
+
+// INPUTS
+minBodySize = input.float(0.0005, "Min Body Size", minval=0.0001, maxval=0.01, tooltip="Minimum candle body size to qualify")
+swingLookback = input.int(10, "Structure Lookback", minval=5, maxval=20)
+showLabels = input.bool(true, "Show Labels")
+
+// ==================================================================================
+// ZONE STORAGE
+// ==================================================================================
+type Zone
+    box b
+    label l
+    int barIdx
+    float top
+    float bottom
+
+var array<Zone> zones = array.new<Zone>()
+
+// ==================================================================================
+// CANDLE PROPERTIES
+// ==================================================================================
+body = math.abs(close - open)
+isBull = close > open
+isBear = close < open
+
+wasRed = close[1] < open[1]
+wasGreen = close[1] > open[1]
+
+// ==================================================================================
+// PATTERN DETECTION
+// ==================================================================================
+// DEMAND: Red candle followed by Green candle
+demandPattern = wasRed and isBull and body > minBodySize
+
+// SUPPLY: Green candle followed by Red candle
+supplyPattern = wasGreen and isBear and body > minBodySize
+
+// ==================================================================================
+// BREAK OF STRUCTURE
+// ==================================================================================
+highestHigh = ta.highest(high, swingLookback)
+lowestLow = ta.lowest(low, swingLookback)
+
+breakHigh = close > highestHigh[1]
+breakLow = close < lowestLow[1]
+
+// ==================================================================================
+// VALID ZONES
+// ==================================================================================
+validDemand = demandPattern and breakHigh
+validSupply = supplyPattern and breakLow
+
+// ==================================================================================
+// CREATE DEMAND ZONE (On RED base candle)
+// ==================================================================================
+if validDemand and bar_index >= 1
+    float top = open[1]
+    float bottom = low[1]
+    
+    b = box.new(time[1], top, time, bottom, 
+         bgcolor=color.new(color.green, 85), 
+         border_color=color.green, 
+         border_width=2, 
+         extend=extend.right, 
+         xloc=xloc.bar_time)
+    
+    label l = na
+    if showLabels
+        l := label.new(time, bottom, "DEMAND", 
+             style=label.style_label_up, 
+             color=color.green, 
+             textcolor=color.white, 
+             xloc=xloc.bar_time)
+    
+    z = Zone.new(b, l, bar_index - 1, top, bottom)
+    array.push(zones, z)
+
+// ==================================================================================
+// CREATE SUPPLY ZONE (On GREEN base candle)
+// ==================================================================================
+if validSupply and bar_index >= 1
+    float top = high[1]
+    float bottom = open[1]
+    
+    b = box.new(time[1], top, time, bottom, 
+         bgcolor=color.new(color.red, 85), 
+         border_color=color.red, 
+         border_width=2, 
+         extend=extend.right, 
+         xloc=xloc.bar_time)
+    
+    label l = na
+    if showLabels
+        l := label.new(time, top, "SUPPLY", 
+             style=label.style_label_down, 
+             color=color.red, 
+             textcolor=color.white, 
+             xloc=xloc.bar_time)
+    
+    z = Zone.new(b, l, bar_index - 1, top, bottom)
+    array.push(zones, z)
+
+// ==================================================================================
+// DELETE TOUCHED ZONES
+// ==================================================================================
+if array.size(zones) > 0
+    for i = array.size(zones) - 1 to 0
+        z = array.get(zones, i)
+        if low <= z.top and high >= z.bottom
+            box.delete(z.b)
+            if not na(z.l)
+                label.delete(z.l)
+            array.remove(zones, i)
+
+// ==================================================================================
+// UPDATE LABELS
+// ==================================================================================
+if barstate.islast and array.size(zones) > 0
+    for z in zones
+        if not na(z.l)
+            label.set_x(z.l, time)
+
+// LIMIT
+while array.size(zones) > 30
+    z = array.shift(zones)
+    box.delete(z.b)
+    if not na(z.l)
+        label.delete(z.l)
