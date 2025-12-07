@@ -94,8 +94,7 @@ createZone(int bornIdx, float top, float bottom, string tfParam, string side) =>
     z.boxId := box.new(bornIdx, top, bornIdx + extendBars, bottom, zoneColor, 1, line.style_solid, extend.right, xloc.bar_index, zoneColor)
     string labelText = (tfParam == "240" ? "H4 " : "H1 ") + (side == "supply" ? "S" : "D") + " FRESH"
     float labelY = side == "supply" ? top : bottom
-    label.style lblStyle = side == "supply" ? label.style_label_down : label.style_label_up
-    z.labelId := label.new(bornIdx, labelY, labelText, xloc.bar_index, yloc.price, zoneColor, lblStyle, color.white, size.tiny)
+    z.labelId := label.new(bornIdx, labelY, labelText, xloc.bar_index, yloc.price, zoneColor, side == "supply" ? label.style_label_down : label.style_label_up, color.white, size.tiny)
     z
 
 deleteZone(Zone z) =>
