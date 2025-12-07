@@ -174,5 +174,3 @@ if barstate.islast
          text_color=useBOS ? color.red : color.lime)
 
 // ==================================================================================
-plotchar(validDemand, "Demand Signal", "▲", location.belowbar, color.green, size=size.tiny)
-plotchar(validSupply, "Supply Signal", "▼", location.abovebar, color.red, size=size.tiny)
