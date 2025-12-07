@@ -20,7 +20,7 @@ maxShow = input.int(50, "Max Zones", group="Management")
 // ==================================================================================
 type Zone
     box b
-    label l
+    label l = na
     int bar
     float t
     float bt
