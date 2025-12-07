@@ -1,0 +1,76 @@
+//@version=6
+indicator("Institutional Order Blocks", overlay=true, max_boxes_count=50, max_labels_count=50)
+
+// ==================================================================================
+// YOUR RULES - SIMPLIFIED
+// ==================================================================================
+// ✓ RULE 1: Red→Green (Demand) or Green→Red (Supply)
+// ✓ RULE 2: Big Impulse (adjustable)
+// ✓ RULE 3: Break of Structure
+// ==================================================================================
+
+impulseMultiplier = input.float(1.5, "Impulse: Body > ATR × ", minval=1.0, maxval=3.0, 
+     tooltip="Lower = more zones. Try 1.3 for EUR/USD")
+bosLookback = input.int(10, "Structure Lookback", minval=5, maxval=20)
+
+// ATR calculation
+atr = ta.atr(14)
+
+// Draw zones directly - no storage, no deletion complexity
+if bar_index >= 1
+    // Check base pattern
+    redBase = close[1] < open[1]
+    greenBase = close[1] > open[1]
+    greenImpulse = close > open
+    redImpulse = close < open
+    
+    // Demand setup
+    demandPattern = redBase and greenImpulse
+    
+    // Supply setup
+    supplyPattern = greenBase and redImpulse
+    
+    // Check impulse size
+    currentBody = math.abs(close - open)
+    bigEnough = currentBody > (atr * impulseMultiplier)
+    
+    // Check structure break
+    highest = ta.highest(high, bosLookback)
+    lowest = ta.lowest(low, bosLookback)
+    breakHigh = close > highest[1]
+    breakLow = close < lowest[1]
+    
+    // DEMAND ZONE (all 3 rules)
+    if demandPattern and bigEnough and breakHigh
+        // Draw on RED base candle
+        box.new(time[1], open[1], time + (time - time[1]) * 50, low[1], 
+             bgcolor=color.new(color.green, 85), 
+             border_color=color.green, 
+             border_width=2,
+             xloc=xloc.bar_time)
+        
+        label.new(time + (time - time[1]) * 25, low[1], "DEMAND OB", 
+             style=label.style_label_up, 
+             color=color.new(color.green, 20), 
+             textcolor=color.white, 
+             size=size.small,
+             xloc=xloc.bar_time)
+    
+    // SUPPLY ZONE (all 3 rules)
+    if supplyPattern and bigEnough and breakLow
+        // Draw on GREEN base candle
+        box.new(time[1], high[1], time + (time - time[1]) * 50, open[1], 
+             bgcolor=color.new(color.red, 85), 
+             border_color=color.red, 
+             border_width=2,
+             xloc=xloc.bar_time)
+        
+        label.new(time + (time - time[1]) * 25, high[1], "SUPPLY OB", 
+             style=label.style_label_down, 
+             color=color.new(color.red, 20), 
+             textcolor=color.white, 
+             size=size.small,
+             xloc=xloc.bar_time)
+
+// Show current ATR value for reference
+plot(atr, "ATR", color=color.new(color.gray, 90), display=display.none)
